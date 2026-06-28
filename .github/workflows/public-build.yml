@@ -207,7 +207,7 @@ jobs:
 
   build_android:
     name: Build Android
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     needs: context
     if: contains(needs.context.outputs.targets_csv, 'android')
     steps:
@@ -255,6 +255,11 @@ jobs:
             Write-Host "ninja already available: $($ninja.Source)"
             return
           }
+          if ($IsLinux) {
+            sudo apt-get update
+            sudo apt-get install -y ninja-build
+            return
+          }
           choco install ninja -y --no-progress
 
       - name: Install Android SDK packages
@@ -287,7 +292,7 @@ jobs:
             throw "Missing secret: ANDROID_KEY_PASSWORD"
           }
 
-          $androidDir = Join-Path $PWD "source\src-tauri\gen\android"
+          $androidDir = Join-Path $PWD "source/src-tauri/gen/android"
           $androidAppDir = Join-Path $androidDir "app"
           $keystorePath = Join-Path $androidAppDir "legado.jks"
           $keyPropsPath = Join-Path $androidDir "key.properties"
@@ -304,7 +309,7 @@ jobs:
       - name: Rewrite Android Gradle JDK path for the runner
         shell: pwsh
         run: |
-          $gradlePropsPath = Join-Path $PWD "source\src-tauri\gen\android\gradle.properties"
+          $gradlePropsPath = Join-Path $PWD "source/src-tauri/gen/android/gradle.properties"
           $content = Get-Content $gradlePropsPath -Raw
           $escapedJavaHome = $env:JAVA_HOME.Replace("\", "\\")
           $updated = [Regex]::Replace(
@@ -313,6 +318,18 @@ jobs:
             "org.gradle.java.home=$escapedJavaHome"
           )
           Set-Content -Path $gradlePropsPath -Value $updated -Encoding utf8
+
+      - name: Normalize Tauri beforeBuildCommand for Linux Android runner
+        shell: pwsh
+        working-directory: source
+        run: |
+          $tauriConfigPath = Join-Path $PWD "src-tauri/tauri.conf.json"
+          $content = Get-Content $tauriConfigPath -Raw
+          $updated = $content -replace '"beforeBuildCommand"\s*:\s*"cmd /c pnpm build"', '"beforeBuildCommand": "pnpm build"'
+          if ($updated -eq $content) {
+            throw "Failed to rewrite beforeBuildCommand in src-tauri/tauri.conf.json"
+          }
+          Set-Content -Path $tauriConfigPath -Value $updated -Encoding utf8
 
       - name: Install dependencies
         shell: pwsh
