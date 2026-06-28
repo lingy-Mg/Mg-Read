@@ -486,7 +486,7 @@ jobs:
           echo "JAVA_HOME=${JAVA_HOME}"
           echo "OHOS_BASE_SDK_HOME=${OHOS_BASE_SDK_HOME}"
           ohpm --version
-          ./node_modules/.bin/hvigor --version
+          hvigorw --version
 
       - name: Verify Harmony prebuilt assets
         shell: bash
@@ -534,9 +534,9 @@ jobs:
         working-directory: source/LegadoArkTS
         run: |
           ohpm install --all
-          ./node_modules/.bin/hvigor --stop-daemon
-          ./node_modules/.bin/hvigor clean --no-daemon --stacktrace
-          ./node_modules/.bin/hvigor assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace
+          hvigorw --stop-daemon
+          hvigorw clean --no-daemon --stacktrace
+          hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace
 
       - name: Collect Harmony artifacts
         shell: bash
