@@ -56,4 +56,5 @@ powershell -ExecutionPolicy Bypass -File .\scripts\trigger-public-build.ps1 `
 - 公开仓库不保存闭源源码，只在 Actions 运行时临时 checkout 私库指定提交。
 - Windows 与 Android 分开构建，最后统一收集并打密码压缩包发布到公开仓库 Release。
 - Android 签名文件不再依赖私库中的本地 `key.properties` / `.jks`，而是由公开仓库 Secrets 在运行时临时写入。
+- 模板默认启用 `pnpm`、Rust `Cargo/target`、Gradle 三层缓存，尽量复用 GitHub Actions 免费缓存来缩短后续构建时间。
 - 当前模板优先覆盖 Windows 和 Android；Harmony / Linux 后续可以按同样模式扩展。
