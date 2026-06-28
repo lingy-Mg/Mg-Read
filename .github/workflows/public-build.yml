@@ -1,0 +1,415 @@
+# This workflow builds Windows and Android artifacts from the private source repo
+# and publishes password-protected archives in the public repository releases.
+name: Public Build Bridge
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repository:
+        description: "Private source repository (owner/name)"
+        required: false
+        type: string
+      source_ref:
+        description: "Branch or tag to build when source_sha is empty"
+        required: false
+        type: string
+      source_sha:
+        description: "Exact commit SHA to build"
+        required: false
+        type: string
+      targets:
+        description: "Build targets"
+        required: false
+        type: choice
+        default: both
+        options:
+          - both
+          - windows
+          - android
+      release_tag:
+        description: "Release tag to publish in this public repo"
+        required: false
+        type: string
+      release_version:
+        description: "Human-readable release version"
+        required: false
+        type: string
+  repository_dispatch:
+    types:
+      - private-build-request
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: "24"
+  PNPM_VERSION: "11.8.0"
+  ANDROID_PLATFORM: "android-36"
+  ANDROID_BUILD_TOOLS: "36.0.0"
+  ANDROID_NDK_VERSION: "27.2.12479018"
+
+jobs:
+  context:
+    name: Resolve Context
+    runs-on: windows-latest
+    outputs:
+      source_repository: ${{ steps.vars.outputs.source_repository }}
+      source_ref: ${{ steps.vars.outputs.source_ref }}
+      source_sha: ${{ steps.vars.outputs.source_sha }}
+      checkout_ref: ${{ steps.vars.outputs.checkout_ref }}
+      targets_csv: ${{ steps.vars.outputs.targets_csv }}
+      release_tag: ${{ steps.vars.outputs.release_tag }}
+      release_version: ${{ steps.vars.outputs.release_version }}
+    steps:
+      - name: Resolve dispatch inputs
+        id: vars
+        shell: pwsh
+        env:
+          SECRET_SOURCE_REPOSITORY: ${{ secrets.PRIVATE_SOURCE_REPOSITORY }}
+          EVENT_SOURCE_REPOSITORY: ${{ github.event.client_payload.source_repository }}
+          EVENT_SOURCE_REF: ${{ github.event.client_payload.source_ref }}
+          EVENT_SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
+          EVENT_TARGETS: ${{ github.event.client_payload.targets }}
+          EVENT_RELEASE_TAG: ${{ github.event.client_payload.release_tag }}
+          EVENT_RELEASE_VERSION: ${{ github.event.client_payload.release_version }}
+          INPUT_SOURCE_REPOSITORY: ${{ inputs.source_repository }}
+          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_TARGETS: ${{ inputs.targets }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          function Pick-First([string[]]$Values) {
+            foreach ($value in $Values) {
+              if (-not [string]::IsNullOrWhiteSpace($value)) {
+                return $value.Trim()
+              }
+            }
+            return ""
+          }
+
+          function Write-OutputValue([string]$Name, [string]$Value) {
+            "$Name=$Value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+          $sourceRepository = Pick-First @(
+            $env:EVENT_SOURCE_REPOSITORY,
+            $env:INPUT_SOURCE_REPOSITORY,
+            $env:SECRET_SOURCE_REPOSITORY
+          )
+          if (-not $sourceRepository) {
+            throw "Missing source repository. Set PRIVATE_SOURCE_REPOSITORY secret or pass source_repository input."
+          }
+
+          $sourceRef = Pick-First @(
+            $env:EVENT_SOURCE_REF,
+            $env:INPUT_SOURCE_REF,
+            "main"
+          )
+          $sourceSha = Pick-First @(
+            $env:EVENT_SOURCE_SHA,
+            $env:INPUT_SOURCE_SHA
+          )
+          $checkoutRef = if ($sourceSha) { $sourceSha } else { $sourceRef }
+
+          $targetsValue = Pick-First @(
+            $env:EVENT_TARGETS,
+            $env:INPUT_TARGETS,
+            "both"
+          )
+          $targetsCsv = switch ($targetsValue.ToLowerInvariant()) {
+            "both" { "windows,android" }
+            default { ($targetsValue -replace "\s+", "").ToLowerInvariant() }
+          }
+
+          $releaseTag = Pick-First @(
+            $env:EVENT_RELEASE_TAG,
+            $env:INPUT_RELEASE_TAG,
+            "manual-$env:GITHUB_RUN_ID"
+          )
+          $releaseVersion = Pick-First @(
+            $env:EVENT_RELEASE_VERSION,
+            $env:INPUT_RELEASE_VERSION,
+            $releaseTag
+          )
+
+          Write-OutputValue "source_repository" $sourceRepository
+          Write-OutputValue "source_ref" $sourceRef
+          Write-OutputValue "source_sha" $sourceSha
+          Write-OutputValue "checkout_ref" $checkoutRef
+          Write-OutputValue "targets_csv" $targetsCsv
+          Write-OutputValue "release_tag" $releaseTag
+          Write-OutputValue "release_version" $releaseVersion
+
+  build_windows:
+    name: Build Windows
+    runs-on: windows-latest
+    needs: context
+    if: contains(needs.context.outputs.targets_csv, 'windows')
+    steps:
+      - name: Checkout private source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.context.outputs.source_repository }}
+          ref: ${{ needs.context.outputs.checkout_ref }}
+          token: ${{ secrets.PRIVATE_SOURCE_PAT }}
+          path: source
+          fetch-depth: 1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install dependencies
+        shell: pwsh
+        working-directory: source
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Windows release
+        shell: pwsh
+        working-directory: source
+        run: pnpm run build:windows:release
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-windows
+          path: source/构建结果/*
+          if-no-files-found: error
+
+  build_android:
+    name: Build Android
+    runs-on: windows-latest
+    needs: context
+    if: contains(needs.context.outputs.targets_csv, 'android')
+    steps:
+      - name: Checkout private source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.context.outputs.source_repository }}
+          ref: ${{ needs.context.outputs.checkout_ref }}
+          token: ${{ secrets.PRIVATE_SOURCE_PAT }}
+          path: source
+          fetch-depth: 1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install Android SDK packages
+        shell: pwsh
+        run: |
+          sdkmanager --install `
+            "platform-tools" `
+            "platforms;${env:ANDROID_PLATFORM}" `
+            "build-tools;${env:ANDROID_BUILD_TOOLS}" `
+            "ndk;${env:ANDROID_NDK_VERSION}"
+
+      - name: Materialize Android signing files
+        shell: pwsh
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if (-not $env:ANDROID_KEYSTORE_BASE64) {
+            throw "Missing secret: ANDROID_KEYSTORE_BASE64"
+          }
+          if (-not $env:ANDROID_KEY_ALIAS) {
+            throw "Missing secret: ANDROID_KEY_ALIAS"
+          }
+          if (-not $env:ANDROID_KEYSTORE_PASSWORD) {
+            throw "Missing secret: ANDROID_KEYSTORE_PASSWORD"
+          }
+          if (-not $env:ANDROID_KEY_PASSWORD) {
+            throw "Missing secret: ANDROID_KEY_PASSWORD"
+          }
+
+          $androidDir = Join-Path $PWD "source\src-tauri\gen\android"
+          $androidAppDir = Join-Path $androidDir "app"
+          $keystorePath = Join-Path $androidAppDir "legado.jks"
+          $keyPropsPath = Join-Path $androidDir "key.properties"
+
+          [IO.File]::WriteAllBytes($keystorePath, [Convert]::FromBase64String($env:ANDROID_KEYSTORE_BASE64))
+
+          @"
+          storePassword=$env:ANDROID_KEYSTORE_PASSWORD
+          keyPassword=$env:ANDROID_KEY_PASSWORD
+          keyAlias=$env:ANDROID_KEY_ALIAS
+          storeFile=legado.jks
+          "@.Trim() | Set-Content -Path $keyPropsPath -Encoding utf8
+
+      - name: Rewrite Android Gradle JDK path for the runner
+        shell: pwsh
+        run: |
+          $gradlePropsPath = Join-Path $PWD "source\src-tauri\gen\android\gradle.properties"
+          $content = Get-Content $gradlePropsPath -Raw
+          $escapedJavaHome = $env:JAVA_HOME.Replace("\", "\\")
+          $updated = [Regex]::Replace(
+            $content,
+            'org\.gradle\.java\.home=.*',
+            "org.gradle.java.home=$escapedJavaHome"
+          )
+          Set-Content -Path $gradlePropsPath -Value $updated -Encoding utf8
+
+      - name: Install dependencies
+        shell: pwsh
+        working-directory: source
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Android release
+        shell: pwsh
+        working-directory: source
+        run: |
+          $ndkHome = Join-Path $env:ANDROID_HOME "ndk\${env:ANDROID_NDK_VERSION}"
+          $env:ANDROID_NDK_HOME = $ndkHome
+          $env:NDK_HOME = $ndkHome
+          $env:GRADLE_OPTS = "-Dorg.gradle.java.home=$env:JAVA_HOME"
+          pnpm run build:android:release
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-android
+          path: source/构建结果/*
+          if-no-files-found: error
+
+  release:
+    name: Publish Release
+    runs-on: windows-latest
+    needs:
+      - context
+      - build_windows
+      - build_android
+    if: >-
+      !cancelled() &&
+      (needs.build_windows.result == 'success' || needs.build_windows.result == 'skipped') &&
+      (needs.build_android.result == 'success' || needs.build_android.result == 'skipped') &&
+      (needs.build_windows.result == 'success' || needs.build_android.result == 'success')
+    steps:
+      - name: Checkout public repo
+        uses: actions/checkout@v4
+
+      - name: Download built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: incoming
+          merge-multiple: true
+
+      - name: Build release manifest
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release-assets -Force | Out-Null
+          $manifest = [ordered]@{
+            source_repository = "${{ needs.context.outputs.source_repository }}"
+            source_ref        = "${{ needs.context.outputs.source_ref }}"
+            source_sha        = "${{ needs.context.outputs.source_sha }}"
+            targets           = "${{ needs.context.outputs.targets_csv }}"
+            release_tag       = "${{ needs.context.outputs.release_tag }}"
+            release_version   = "${{ needs.context.outputs.release_version }}"
+            run_id            = "${{ github.run_id }}"
+            run_attempt       = "${{ github.run_attempt }}"
+            workflow_url      = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          $manifest | ConvertTo-Json -Depth 8 | Set-Content -Path release-assets/build-manifest.json -Encoding utf8
+
+      - name: Ensure 7-Zip
+        shell: pwsh
+        run: |
+          $sevenZip = Get-Command 7z -ErrorAction SilentlyContinue
+          if ($sevenZip) {
+            Write-Host "7z already available: $($sevenZip.Source)"
+            return
+          }
+          choco install 7zip -y --no-progress
+
+      - name: Create password-protected archives
+        shell: pwsh
+        env:
+          RELEASE_ARCHIVE_PASSWORD: ${{ secrets.RELEASE_ARCHIVE_PASSWORD }}
+        run: |
+          if (-not $env:RELEASE_ARCHIVE_PASSWORD) {
+            throw "Missing secret: RELEASE_ARCHIVE_PASSWORD"
+          }
+          .\scripts\create-protected-archives.ps1 `
+            -InputDir incoming `
+            -OutputDir release-assets `
+            -Password $env:RELEASE_ARCHIVE_PASSWORD
+
+      - name: Create or update GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ needs.context.outputs.release_tag }}"
+          $title = "Legado Tauri ${{ needs.context.outputs.release_version }}"
+          $notes = @"
+          Private source repository: ${{ needs.context.outputs.source_repository }}
+          Source ref: ${{ needs.context.outputs.source_ref }}
+          Source sha: ${{ needs.context.outputs.source_sha }}
+          Targets: ${{ needs.context.outputs.targets_csv }}
+          Workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          "@.Trim()
+
+          & gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          $exists = $LASTEXITCODE -eq 0
+
+          if (-not $exists) {
+            & gh release create $tag release-assets\* `
+              --repo $env:GITHUB_REPOSITORY `
+              --title $title `
+              --notes $notes
+            if ($LASTEXITCODE -ne 0) {
+              throw "gh release create 失败，退出码：$LASTEXITCODE"
+            }
+            return
+          }
+
+          & gh release upload $tag release-assets\* --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) {
+            throw "gh release upload 失败，退出码：$LASTEXITCODE"
+          }
+
+          & gh release edit $tag --repo $env:GITHUB_REPOSITORY --title $title --notes $notes
+          if ($LASTEXITCODE -ne 0) {
+            throw "gh release edit 失败，退出码：$LASTEXITCODE"
+          }
