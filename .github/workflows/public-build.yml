@@ -486,7 +486,7 @@ jobs:
           echo "JAVA_HOME=${JAVA_HOME}"
           echo "OHOS_BASE_SDK_HOME=${OHOS_BASE_SDK_HOME}"
           ohpm --version
-          hvigorw --version
+          ./node_modules/.bin/hvigorw --version
 
       - name: Verify Harmony prebuilt assets
         shell: bash
@@ -535,12 +535,12 @@ jobs:
         run: |
           ohpm install --all
           if [ -f "${HOME}/.hvigor/daemon/cache/daemon-sec.json" ]; then
-            hvigorw --stop-daemon
+            ./node_modules/.bin/hvigorw --stop-daemon
           else
             echo "No hvigor daemon cache yet, skip stop-daemon."
           fi
-          hvigorw clean --no-daemon --stacktrace
-          hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace
+          ./node_modules/.bin/hvigorw clean --no-daemon --stacktrace
+          ./node_modules/.bin/hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace
 
       - name: Collect Harmony artifacts
         shell: bash
