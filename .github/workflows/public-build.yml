@@ -355,6 +355,21 @@ jobs:
           }
           Set-Content -Path $tauriConfigPath -Value $updated -Encoding utf8
 
+      - name: Sanitize repo .env host-path overrides for Android runner
+        shell: pwsh
+        working-directory: source
+        run: |
+          $envPath = Join-Path $PWD ".env"
+          if (-not (Test-Path $envPath)) {
+            Write-Host ".env not found, skip sanitization."
+            return
+          }
+          $lines = Get-Content $envPath
+          $filtered = $lines | Where-Object {
+            $_ -notmatch '^(JAVA_HOME|ANDROID_HOME|ANDROID_SDK_ROOT|ANDROID_NDK_HOME|NDK_HOME)='
+          }
+          Set-Content -Path $envPath -Value $filtered -Encoding utf8
+
       - name: Install dependencies
         shell: pwsh
         working-directory: source
@@ -408,9 +423,9 @@ jobs:
       - build_windows
       - build_android
     if: >-
+      always() &&
       !cancelled() &&
       (needs.build_windows.result == 'success' || needs.build_windows.result == 'skipped') &&
-      (needs.build_android.result == 'success' || needs.build_android.result == 'skipped') &&
       (needs.build_windows.result == 'success' || needs.build_android.result == 'success')
     steps:
       - name: Checkout public repo
@@ -432,6 +447,8 @@ jobs:
             source_ref        = "${{ needs.context.outputs.source_ref }}"
             source_sha        = "${{ needs.context.outputs.source_sha }}"
             targets           = "${{ needs.context.outputs.targets_csv }}"
+            windows_result    = "${{ needs.build_windows.result }}"
+            android_result    = "${{ needs.build_android.result }}"
             release_tag       = "${{ needs.context.outputs.release_tag }}"
             release_version   = "${{ needs.context.outputs.release_version }}"
             run_id            = "${{ github.run_id }}"
@@ -475,6 +492,8 @@ jobs:
           Source ref: ${{ needs.context.outputs.source_ref }}
           Source sha: ${{ needs.context.outputs.source_sha }}
           Targets: ${{ needs.context.outputs.targets_csv }}
+          Windows result: ${{ needs.build_windows.result }}
+          Android result: ${{ needs.build_android.result }}
           Workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           "@.Trim()
 
