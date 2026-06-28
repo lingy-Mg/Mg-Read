@@ -53,7 +53,6 @@ jobs:
     name: Resolve Context
     runs-on: windows-latest
     outputs:
-      source_repository: ${{ steps.vars.outputs.source_repository }}
       source_ref: ${{ steps.vars.outputs.source_ref }}
       source_sha: ${{ steps.vars.outputs.source_sha }}
       checkout_ref: ${{ steps.vars.outputs.checkout_ref }}
@@ -133,7 +132,6 @@ jobs:
             $releaseTag
           )
 
-          Write-OutputValue "source_repository" $sourceRepository
           Write-OutputValue "source_ref" $sourceRef
           Write-OutputValue "source_sha" $sourceSha
           Write-OutputValue "checkout_ref" $checkoutRef
@@ -150,7 +148,7 @@ jobs:
       - name: Checkout private source
         uses: actions/checkout@v4
         with:
-          repository: ${{ needs.context.outputs.source_repository }}
+          repository: ${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}
           ref: ${{ needs.context.outputs.checkout_ref }}
           token: ${{ secrets.PRIVATE_SOURCE_PAT }}
           path: source
@@ -200,7 +198,7 @@ jobs:
       - name: Checkout private source
         uses: actions/checkout@v4
         with:
-          repository: ${{ needs.context.outputs.source_repository }}
+          repository: ${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}
           ref: ${{ needs.context.outputs.checkout_ref }}
           token: ${{ secrets.PRIVATE_SOURCE_PAT }}
           path: source
@@ -340,7 +338,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path release-assets -Force | Out-Null
           $manifest = [ordered]@{
-            source_repository = "${{ needs.context.outputs.source_repository }}"
+            source_repository = "${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}"
             source_ref        = "${{ needs.context.outputs.source_ref }}"
             source_sha        = "${{ needs.context.outputs.source_sha }}"
             targets           = "${{ needs.context.outputs.targets_csv }}"
@@ -383,7 +381,7 @@ jobs:
           $tag = "${{ needs.context.outputs.release_tag }}"
           $title = "Legado Tauri ${{ needs.context.outputs.release_version }}"
           $notes = @"
-          Private source repository: ${{ needs.context.outputs.source_repository }}
+          Private source repository: ${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}
           Source ref: ${{ needs.context.outputs.source_ref }}
           Source sha: ${{ needs.context.outputs.source_sha }}
           Targets: ${{ needs.context.outputs.targets_csv }}
