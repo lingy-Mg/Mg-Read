@@ -534,7 +534,11 @@ jobs:
         working-directory: source/LegadoArkTS
         run: |
           ohpm install --all
-          hvigorw --stop-daemon
+          if [ -f "${HOME}/.hvigor/daemon/cache/daemon-sec.json" ]; then
+            hvigorw --stop-daemon
+          else
+            echo "No hvigor daemon cache yet, skip stop-daemon."
+          fi
           hvigorw clean --no-daemon --stacktrace
           hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace
 
