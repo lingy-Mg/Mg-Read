@@ -1,4 +1,4 @@
-# This workflow builds Windows and Android artifacts from the private source repo
+# This workflow builds Windows / Android / Harmony artifacts from the private source repo
 # and publishes password-protected archives in the public repository releases.
 name: Public Build Bridge
 
@@ -24,8 +24,10 @@ on:
         default: both
         options:
           - both
+          - all
           - windows
           - android
+          - harmony
       release_tag:
         description: "Release tag to publish in this public repo"
         required: false
@@ -47,6 +49,7 @@ env:
   ANDROID_PLATFORM: "android-36"
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK_VERSION: "27.2.12479018"
+  HARMONY_CONTAINER_IMAGE: "ghcr.io/sanchuanhehe/harmony-next-pipeline-docker/harmonyos-ci-image:v5.0.4"
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: "5"
 
 jobs:
@@ -119,6 +122,7 @@ jobs:
           )
           $targetsCsv = switch ($targetsValue.ToLowerInvariant()) {
             "both" { "windows,android" }
+            "all" { "windows,android,harmony" }
             default { ($targetsValue -replace "\s+", "").ToLowerInvariant() }
           }
 
@@ -415,6 +419,154 @@ jobs:
           path: source/构建结果/*
           if-no-files-found: error
 
+  build_harmony:
+    name: Build Harmony
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ env.HARMONY_CONTAINER_IMAGE }}
+    needs: context
+    if: contains(needs.context.outputs.targets_csv, 'harmony')
+    steps:
+      - name: Checkout private source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}
+          ref: ${{ needs.context.outputs.checkout_ref }}
+          token: ${{ secrets.PRIVATE_SOURCE_PAT }}
+          path: source
+          fetch-depth: 1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+
+      - name: Restore Harmony dependency caches
+        uses: actions/cache@v4
+        with:
+          key: ${{ runner.os }}-public-build-harmony-deps-${{ hashFiles('source/pnpm-lock.yaml', 'source/LegadoArkTS/oh-package-lock.json5', 'source/LegadoArkTS/oh-package.json5', 'source/LegadoArkTS/hvigorfile.ts', 'source/LegadoArkTS/build-profile.json5') }}
+          restore-keys: |
+            ${{ runner.os }}-public-build-harmony-deps-
+          path: |
+            ~/.ohpm
+            ~/.npm
+            source/LegadoArkTS/oh_modules
+            source/LegadoArkTS/.hvigor
+            source/LegadoArkTS/node_modules
+
+      - name: Install Harmony build tooling
+        shell: bash
+        working-directory: source/LegadoArkTS
+        run: |
+          npm config set @ohos:registry https://repo.harmonyos.com/npm/
+          npm install --no-save @ohos/hvigor@6.23.5 @ohos/hvigor-ohos-plugin@6.23.5
+
+      - name: Install web dependencies
+        shell: bash
+        working-directory: source
+        run: pnpm install --frozen-lockfile
+
+      - name: Sync Harmony rawfile web bundle
+        shell: bash
+        working-directory: source
+        run: |
+          pnpm run build:harmony
+
+      - name: Verify Harmony toolchain
+        shell: bash
+        working-directory: source/LegadoArkTS
+        run: |
+          echo "JAVA_HOME=${JAVA_HOME}"
+          echo "OHOS_BASE_SDK_HOME=${OHOS_BASE_SDK_HOME}"
+          ohpm --version
+          ./node_modules/.bin/hvigor --version
+
+      - name: Verify Harmony prebuilt assets
+        shell: bash
+        working-directory: source
+        run: |
+          test -f "LegadoArkTS/entry/src/main/cpp/prebuilt/curl-impersonate/include/curl/curl.h"
+          test -f "LegadoArkTS/entry/src/main/cpp/prebuilt/curl-impersonate/arm64-v8a/libcurl-impersonate.so"
+          test -f "LegadoArkTS/entry/src/main/cpp/prebuilt/curl-impersonate/x86_64/libcurl-impersonate.so"
+
+      - name: Patch Harmony build profile to release mode
+        shell: bash
+        working-directory: source
+        run: |
+          node --input-type=module <<'EOF'
+          import fs from "node:fs";
+          import path from "node:path";
+
+          function walk(dir) {
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries) {
+              const fullPath = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                walk(fullPath);
+                continue;
+              }
+              if (entry.name !== "BuildProfile.ets") {
+                continue;
+              }
+              const original = fs.readFileSync(fullPath, "utf8");
+              const updated = original
+                .replace(/(export const DEBUG(?:\s*:\s*\w+)?\s*=\s*)true\s*;/g, "$1false;")
+                .replace(/(export const BUILD_MODE_NAME(?:\s*:\s*\w+)?\s*=\s*)'debug'\s*;/g, "$1'release';");
+              if (updated !== original) {
+                fs.writeFileSync(fullPath, updated);
+                console.log(`patched ${fullPath}`);
+              }
+            }
+          }
+
+          walk(path.join(process.cwd(), "LegadoArkTS"));
+          EOF
+
+      - name: Build Harmony release
+        shell: bash
+        working-directory: source/LegadoArkTS
+        run: |
+          ohpm install --all
+          ./node_modules/.bin/hvigor --stop-daemon
+          ./node_modules/.bin/hvigor clean --no-daemon --stacktrace
+          ./node_modules/.bin/hvigor assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace
+
+      - name: Collect Harmony artifacts
+        shell: bash
+        working-directory: source
+        run: |
+          mkdir -p 构建结果
+          find LegadoArkTS/entry/build -type f -name '*.hap' -print -exec cp {} 构建结果/ \;
+          ls -lah 构建结果
+          test -n "$(find 构建结果 -maxdepth 1 -type f -name '*.hap')"
+
+      - name: Verify Harmony HAP native libs
+        shell: bash
+        working-directory: source
+        run: |
+          HAP_PATH="$(find 构建结果 -maxdepth 1 -type f -name '*.hap' | head -n 1)"
+          test -n "$HAP_PATH"
+          unzip -l "$HAP_PATH" | tee /tmp/harmony-hap-list.txt
+          grep -q 'libs/arm64-v8a/libentry.so' /tmp/harmony-hap-list.txt
+          grep -q 'libs/arm64-v8a/libcurl-impersonate.so.4' /tmp/harmony-hap-list.txt
+          grep -q 'libs/x86_64/libentry.so' /tmp/harmony-hap-list.txt
+          grep -q 'libs/x86_64/libcurl-impersonate.so.4' /tmp/harmony-hap-list.txt
+
+      - name: Upload Harmony artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-harmony
+          path: source/构建结果/*
+          if-no-files-found: error
+
   release:
     name: Publish Release
     runs-on: windows-latest
@@ -422,11 +574,15 @@ jobs:
       - context
       - build_windows
       - build_android
+      - build_harmony
     if: >-
       always() &&
       !cancelled() &&
-      (needs.build_windows.result == 'success' || needs.build_windows.result == 'skipped') &&
-      (needs.build_windows.result == 'success' || needs.build_android.result == 'success')
+      (
+        needs.build_windows.result == 'success' ||
+        needs.build_android.result == 'success' ||
+        needs.build_harmony.result == 'success'
+      )
     steps:
       - name: Checkout public repo
         uses: actions/checkout@v4
@@ -449,6 +605,7 @@ jobs:
             targets           = "${{ needs.context.outputs.targets_csv }}"
             windows_result    = "${{ needs.build_windows.result }}"
             android_result    = "${{ needs.build_android.result }}"
+            harmony_result    = "${{ needs.build_harmony.result }}"
             release_tag       = "${{ needs.context.outputs.release_tag }}"
             release_version   = "${{ needs.context.outputs.release_version }}"
             run_id            = "${{ github.run_id }}"
@@ -494,6 +651,7 @@ jobs:
           Targets: ${{ needs.context.outputs.targets_csv }}
           Windows result: ${{ needs.build_windows.result }}
           Android result: ${{ needs.build_android.result }}
+          Harmony result: ${{ needs.build_harmony.result }}
           Workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           "@.Trim()
 
