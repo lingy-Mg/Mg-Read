@@ -247,6 +247,16 @@ jobs:
         with:
           targets: aarch64-linux-android
 
+      - name: Ensure Ninja
+        shell: pwsh
+        run: |
+          $ninja = Get-Command ninja -ErrorAction SilentlyContinue
+          if ($ninja) {
+            Write-Host "ninja already available: $($ninja.Source)"
+            return
+          }
+          choco install ninja -y --no-progress
+
       - name: Install Android SDK packages
         shell: pwsh
         run: |
@@ -334,8 +344,11 @@ jobs:
         working-directory: source
         run: |
           $ndkHome = Join-Path $env:ANDROID_HOME "ndk\${env:ANDROID_NDK_VERSION}"
+          $ninja = Get-Command ninja -ErrorAction Stop
           $env:ANDROID_NDK_HOME = $ndkHome
           $env:NDK_HOME = $ndkHome
+          $env:CMAKE_GENERATOR = "Ninja"
+          $env:CMAKE_MAKE_PROGRAM = $ninja.Source
           $env:GRADLE_OPTS = "-Dorg.gradle.java.home=$env:JAVA_HOME"
           pnpm run build:android:release
 
