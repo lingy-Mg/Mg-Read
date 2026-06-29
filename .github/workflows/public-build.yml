@@ -483,10 +483,18 @@ jobs:
         shell: bash
         working-directory: source/LegadoArkTS
         run: |
+          if [ -x "./node_modules/.bin/hvigor" ]; then
+            HVIGOR_CMD="./node_modules/.bin/hvigor"
+          elif command -v hvigor >/dev/null 2>&1; then
+            HVIGOR_CMD="hvigor"
+          else
+            echo "hvigor command not found after installing Harmony build tooling" >&2
+            exit 127
+          fi
           echo "JAVA_HOME=${JAVA_HOME}"
           echo "OHOS_BASE_SDK_HOME=${OHOS_BASE_SDK_HOME}"
           ohpm --version
-          ./node_modules/.bin/hvigorw --version
+          "$HVIGOR_CMD" --version
 
       - name: Verify Harmony prebuilt assets
         shell: bash
@@ -533,14 +541,22 @@ jobs:
         shell: bash
         working-directory: source/LegadoArkTS
         run: |
+          if [ -x "./node_modules/.bin/hvigor" ]; then
+            HVIGOR_CMD="./node_modules/.bin/hvigor"
+          elif command -v hvigor >/dev/null 2>&1; then
+            HVIGOR_CMD="hvigor"
+          else
+            echo "hvigor command not found after installing Harmony build tooling" >&2
+            exit 127
+          fi
           ohpm install --all
           if [ -f "${HOME}/.hvigor/daemon/cache/daemon-sec.json" ]; then
-            ./node_modules/.bin/hvigorw --stop-daemon
+            "$HVIGOR_CMD" --stop-daemon
           else
             echo "No hvigor daemon cache yet, skip stop-daemon."
           fi
-          ./node_modules/.bin/hvigorw clean --no-daemon --stacktrace
-          ./node_modules/.bin/hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace
+          "$HVIGOR_CMD" clean --no-daemon --stacktrace
+          "$HVIGOR_CMD" assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace
 
       - name: Collect Harmony artifacts
         shell: bash
