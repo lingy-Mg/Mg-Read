@@ -486,7 +486,8 @@ jobs:
           echo "JAVA_HOME=${JAVA_HOME}"
           echo "OHOS_BASE_SDK_HOME=${OHOS_BASE_SDK_HOME}"
           ohpm --version
-          ./node_modules/.bin/hvigorw --version
+          test -f "./node_modules/@ohos/hvigor/bin/hvigor.js"
+          node ./node_modules/@ohos/hvigor/bin/hvigor.js --version
 
       - name: Verify Harmony prebuilt assets
         shell: bash
@@ -539,13 +540,14 @@ jobs:
         working-directory: source/LegadoArkTS
         run: |
           ohpm install --all
+          test -f "./node_modules/@ohos/hvigor/bin/hvigor.js"
           if [ -f "${HOME}/.hvigor/daemon/cache/daemon-sec.json" ]; then
-            ./node_modules/.bin/hvigorw --stop-daemon
+            node ./node_modules/@ohos/hvigor/bin/hvigor.js --stop-daemon
           else
             echo "No hvigor daemon cache yet, skip stop-daemon."
           fi
-          ./node_modules/.bin/hvigorw clean --no-daemon --stacktrace
-          ./node_modules/.bin/hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace
+          node ./node_modules/@ohos/hvigor/bin/hvigor.js clean --no-daemon --stacktrace
+          node ./node_modules/@ohos/hvigor/bin/hvigor.js assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace
 
       - name: Collect Harmony artifacts
         shell: bash
