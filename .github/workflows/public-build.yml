@@ -68,6 +68,7 @@ jobs:
         shell: pwsh
         env:
           SECRET_SOURCE_REPOSITORY: ${{ secrets.PRIVATE_SOURCE_REPOSITORY }}
+          PRIVATE_SOURCE_PAT: ${{ secrets.PRIVATE_SOURCE_PAT }}
           EVENT_SOURCE_REPOSITORY: ${{ github.event.client_payload.source_repository }}
           EVENT_SOURCE_REF: ${{ github.event.client_payload.source_ref }}
           EVENT_SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
@@ -108,11 +109,28 @@ jobs:
             $env:INPUT_SOURCE_REF,
             "main"
           )
-          $sourceSha = Pick-First @(
+          $requestedSourceSha = Pick-First @(
             $env:EVENT_SOURCE_SHA,
             $env:INPUT_SOURCE_SHA
           )
-          $checkoutRef = if ($sourceSha) { $sourceSha } else { $sourceRef }
+          $refToResolve = if ($requestedSourceSha) { $requestedSourceSha } else { $sourceRef }
+          if (-not $env:PRIVATE_SOURCE_PAT) {
+            throw "Missing secret: PRIVATE_SOURCE_PAT"
+          }
+
+          $resolvedSource = Invoke-RestMethod `
+            -Headers @{
+              Authorization = "Bearer $($env:PRIVATE_SOURCE_PAT)"
+              Accept = "application/vnd.github+json"
+              "X-GitHub-Api-Version" = "2022-11-28"
+            } `
+            -Uri ("https://api.github.com/repos/{0}/commits/{1}" -f $sourceRepository, [uri]::EscapeDataString($refToResolve))
+          $sourceSha = $resolvedSource.sha
+          if (-not $sourceSha) {
+            throw "Failed to resolve source SHA for $sourceRepository @ $refToResolve"
+          }
+
+          $checkoutRef = $sourceSha
 
           $targetsValue = Pick-First @(
             $env:EVENT_TARGETS,
@@ -421,10 +439,11 @@ jobs:
   build_harmony:
     name: Build Harmony
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/sanchuanhehe/harmony-next-pipeline-docker/harmonyos-ci-image:v5.0.4
     needs: context
     if: contains(needs.context.outputs.targets_csv, 'harmony')
+    env:
+      HARMONYOS_CLI_ARCHIVE: commandline-tools-linux-x64-6.1.0.816.zip
+      HARMONYOS_CLI_SHA256: 4b21e8a4ce19fc7eb381425a570e936c80067b8a0bef9cdcfe8a49e4764038e2
     steps:
       - name: Checkout private source
         uses: actions/checkout@v4
@@ -448,6 +467,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: source/pnpm-lock.yaml
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
       - name: Restore Harmony dependency caches
         uses: actions/cache@v4
         with:
@@ -461,12 +486,44 @@ jobs:
             source/LegadoArkTS/.hvigor
             source/LegadoArkTS/node_modules
 
-      - name: Install Harmony build tooling
+      - name: Install HarmonyOS SDK
         shell: bash
-        working-directory: source/LegadoArkTS
         run: |
+          set -euxo pipefail
+          cli_url="https://github.com/Okysu/harmony-auto-build/releases/download/${HARMONYOS_CLI_ARCHIVE%.zip}/${HARMONYOS_CLI_ARCHIVE}"
+          curl --fail -L -o "${HARMONYOS_CLI_ARCHIVE}" "${cli_url}"
+          echo "${HARMONYOS_CLI_SHA256}  ${HARMONYOS_CLI_ARCHIVE}" | sha256sum --check --status
+
+          sdk_root="${RUNNER_TEMP}/harmonyos-tools"
+          rm -rf "${sdk_root}"
+          mkdir -p "${sdk_root}"
+          unzip -q "${HARMONYOS_CLI_ARCHIVE}" -d "${sdk_root}"
+          rm "${HARMONYOS_CLI_ARCHIVE}"
+
+          tools_dir="${sdk_root}/command-line-tools"
+          sdk_home="${tools_dir}/sdk"
+          hap_sign_tool_path="$(find "${sdk_home}" -path '*/toolchains/lib/hap-sign-tool.jar' -print -quit)"
+
+          test -d "${sdk_home}"
+          test -n "${hap_sign_tool_path}"
+          test -f "${hap_sign_tool_path}"
+
+          chmod -R +x "${tools_dir}/bin"
+          echo "hwsdk.dir=${sdk_home}" > source/LegadoArkTS/local.properties
+          echo "DEVECO_SDK_HOME=${sdk_home}" >> "${GITHUB_ENV}"
+          echo "OHOS_BASE_SDK_HOME=${sdk_home}" >> "${GITHUB_ENV}"
+          echo "HOS_SDK_HOME=${sdk_home}" >> "${GITHUB_ENV}"
+          echo "HAP_SIGN_TOOL_PATH=${hap_sign_tool_path}" >> "${GITHUB_ENV}"
+          echo "OHPM_HOME=${tools_dir}/ohpm" >> "${GITHUB_ENV}"
+          echo "${tools_dir}/bin" >> "${GITHUB_PATH}"
+
+      - name: Configure Harmony registries
+        shell: bash
+        run: |
+          set -euxo pipefail
+          npm config set registry https://repo.huaweicloud.com/repository/npm/
           npm config set @ohos:registry https://repo.harmonyos.com/npm/
-          npm install --no-save @ohos/hvigor@6.23.5 @ohos/hvigor-ohos-plugin@6.23.5
+          ohpm config set registry https://ohpm.openharmony.cn/ohpm/
 
       - name: Install web dependencies
         shell: bash
@@ -485,9 +542,9 @@ jobs:
         run: |
           echo "JAVA_HOME=${JAVA_HOME}"
           echo "OHOS_BASE_SDK_HOME=${OHOS_BASE_SDK_HOME}"
-          ohpm --version
-          test -f "./node_modules/@ohos/hvigor/bin/hvigor.js"
-          node ./node_modules/@ohos/hvigor/bin/hvigor.js --version
+          command -v ohpm
+          command -v hvigorw
+          test -f "./local.properties"
 
       - name: Verify Harmony prebuilt assets
         shell: bash
@@ -539,15 +596,10 @@ jobs:
         shell: bash
         working-directory: source/LegadoArkTS
         run: |
+          set -euxo pipefail
           ohpm install --all
-          test -f "./node_modules/@ohos/hvigor/bin/hvigor.js"
-          if [ -f "${HOME}/.hvigor/daemon/cache/daemon-sec.json" ]; then
-            node ./node_modules/@ohos/hvigor/bin/hvigor.js --stop-daemon
-          else
-            echo "No hvigor daemon cache yet, skip stop-daemon."
-          fi
-          node ./node_modules/@ohos/hvigor/bin/hvigor.js clean --no-daemon --stacktrace
-          node ./node_modules/@ohos/hvigor/bin/hvigor.js assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace
+          hvigorw clean --no-daemon --stacktrace
+          hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace
 
       - name: Collect Harmony artifacts
         shell: bash
@@ -596,6 +648,15 @@ jobs:
     steps:
       - name: Checkout public repo
         uses: actions/checkout@v4
+
+      - name: Checkout private source history
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}
+          ref: ${{ needs.context.outputs.source_sha }}
+          token: ${{ secrets.PRIVATE_SOURCE_PAT }}
+          path: source
+          fetch-depth: 0
 
       - name: Download built artifacts
         uses: actions/download-artifact@v4
@@ -647,6 +708,26 @@ jobs:
             -OutputDir release-assets `
             -Password $env:RELEASE_ARCHIVE_PASSWORD
 
+      - name: Build release notes
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .\scripts\build-release-notes.ps1 `
+            -PublicRepo $env:GITHUB_REPOSITORY `
+            -CurrentTag "${{ needs.context.outputs.release_tag }}" `
+            -CurrentVersion "${{ needs.context.outputs.release_version }}" `
+            -SourceRepository "${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}" `
+            -SourceRef "${{ needs.context.outputs.source_ref }}" `
+            -SourceSha "${{ needs.context.outputs.source_sha }}" `
+            -Targets "${{ needs.context.outputs.targets_csv }}" `
+            -WindowsResult "${{ needs.build_windows.result }}" `
+            -AndroidResult "${{ needs.build_android.result }}" `
+            -HarmonyResult "${{ needs.build_harmony.result }}" `
+            -WorkflowUrl "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" `
+            -SourceDir source `
+            -OutputPath release-notes.md
+
       - name: Create or update GitHub release
         shell: pwsh
         env:
@@ -654,16 +735,7 @@ jobs:
         run: |
           $tag = "${{ needs.context.outputs.release_tag }}"
           $title = "Legado Tauri ${{ needs.context.outputs.release_version }}"
-          $notes = @"
-          Private source repository: ${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}
-          Source ref: ${{ needs.context.outputs.source_ref }}
-          Source sha: ${{ needs.context.outputs.source_sha }}
-          Targets: ${{ needs.context.outputs.targets_csv }}
-          Windows result: ${{ needs.build_windows.result }}
-          Android result: ${{ needs.build_android.result }}
-          Harmony result: ${{ needs.build_harmony.result }}
-          Workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          "@.Trim()
+          $notesFile = "release-notes.md"
 
           & gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           $exists = $LASTEXITCODE -eq 0
@@ -672,7 +744,7 @@ jobs:
             & gh release create $tag release-assets\* `
               --repo $env:GITHUB_REPOSITORY `
               --title $title `
-              --notes $notes
+              --notes-file $notesFile
             if ($LASTEXITCODE -ne 0) {
               throw "gh release create 失败，退出码：$LASTEXITCODE"
             }
@@ -684,7 +756,7 @@ jobs:
             throw "gh release upload 失败，退出码：$LASTEXITCODE"
           }
 
-          & gh release edit $tag --repo $env:GITHUB_REPOSITORY --title $title --notes $notes
+          & gh release edit $tag --repo $env:GITHUB_REPOSITORY --title $title --notes-file $notesFile
           if ($LASTEXITCODE -ne 0) {
             throw "gh release edit 失败，退出码：$LASTEXITCODE"
           }
