@@ -704,12 +704,44 @@ jobs:
           path: source
           fetch-depth: 0
 
-      - name: Download built artifacts
+      - name: Download Windows artifacts
+        if: needs.build_windows.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          pattern: package-*
-          path: incoming
-          merge-multiple: true
+          name: package-windows
+          path: incoming/windows
+
+      - name: Download Android artifacts
+        if: needs.build_android.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: package-android
+          path: incoming/android
+
+      - name: Download Harmony artifacts
+        if: needs.build_harmony.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: package-harmony
+          path: incoming/harmony
+
+      - name: Inspect downloaded artifacts
+        shell: pwsh
+        run: |
+          if (-not (Test-Path incoming)) {
+            throw "Artifact download directory was not created: incoming"
+          }
+
+          $files = Get-ChildItem -Path incoming -Recurse -File
+          if (-not $files) {
+            throw "No files were downloaded into incoming"
+          }
+
+          $files |
+            Select-Object FullName, Name, Length |
+            Format-Table -AutoSize |
+            Out-String -Width 240 |
+            Write-Host
 
       - name: Build release manifest
         shell: pwsh
