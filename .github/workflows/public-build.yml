@@ -263,13 +263,6 @@ jobs:
           cache: pnpm
           cache-dependency-path: source/pnpm-lock.yaml
 
-      - name: Capture Harmony web toolchain
-        shell: bash
-        run: |
-          set -euxo pipefail
-          echo "LEGADO_HARMONY_NODE_DIR=$(dirname "$(command -v node)")" >> "${GITHUB_ENV}"
-          echo "LEGADO_HARMONY_PNPM_COMMAND=$(command -v pnpm)" >> "${GITHUB_ENV}"
-
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -473,6 +466,13 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: source/pnpm-lock.yaml
+
+      - name: Capture Harmony web toolchain
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo "LEGADO_HARMONY_NODE_DIR=$(dirname "$(command -v node)")" >> "${GITHUB_ENV}"
+          echo "LEGADO_HARMONY_PNPM_COMMAND=$(command -v pnpm)" >> "${GITHUB_ENV}"
 
       - name: Setup Java
         uses: actions/setup-java@v4
