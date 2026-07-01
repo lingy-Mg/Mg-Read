@@ -228,11 +228,21 @@ jobs:
         working-directory: source
         run: pnpm run build:windows:release
 
+      - name: Normalize Windows artifacts for public release
+        shell: pwsh
+        working-directory: source
+        run: |
+          node scripts/prepare-public-build-artifacts.mjs `
+            windows `
+            构建结果 `
+            public-build-results/windows `
+            "${{ needs.context.outputs.release_version }}"
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: package-windows
-          path: source/构建结果/*
+          path: source/public-build-results/windows/*
           if-no-files-found: error
 
   build_android:
@@ -429,11 +439,21 @@ jobs:
           $env:GRADLE_OPTS = "-Dorg.gradle.java.home=$env:JAVA_HOME"
           pnpm run build:android:release
 
+      - name: Normalize Android artifacts for public release
+        shell: pwsh
+        working-directory: source
+        run: |
+          node scripts/prepare-public-build-artifacts.mjs `
+            android `
+            构建结果 `
+            public-build-results/android `
+            "${{ needs.context.outputs.release_version }}"
+
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
         with:
           name: package-android
-          path: source/构建结果/*
+          path: source/public-build-results/android/*
           if-no-files-found: error
 
   build_harmony:
@@ -668,11 +688,21 @@ jobs:
           grep -q 'libs/x86_64/libentry.so' /tmp/harmony-hap-list.txt
           grep -q 'libs/x86_64/libcurl-impersonate.so.4' /tmp/harmony-hap-list.txt
 
+      - name: Normalize Harmony artifacts for public release
+        shell: bash
+        working-directory: source
+        run: |
+          node scripts/prepare-public-build-artifacts.mjs \
+            harmony \
+            构建结果 \
+            public-build-results/harmony \
+            "${{ needs.context.outputs.release_version }}"
+
       - name: Upload Harmony artifacts
         uses: actions/upload-artifact@v4
         with:
           name: package-harmony
-          path: source/构建结果/*
+          path: source/public-build-results/harmony/*
           if-no-files-found: error
 
   release:
@@ -781,10 +811,21 @@ jobs:
           if (-not $env:RELEASE_ARCHIVE_PASSWORD) {
             throw "Missing secret: RELEASE_ARCHIVE_PASSWORD"
           }
+          $expectedKinds = @()
+          if ("${{ needs.build_windows.result }}" -eq "success") {
+            $expectedKinds += "windows"
+          }
+          if ("${{ needs.build_android.result }}" -eq "success") {
+            $expectedKinds += "android"
+          }
+          if ("${{ needs.build_harmony.result }}" -eq "success") {
+            $expectedKinds += "harmony"
+          }
           .\scripts\create-protected-archives.ps1 `
             -InputDir incoming `
             -OutputDir release-assets `
-            -Password $env:RELEASE_ARCHIVE_PASSWORD
+            -Password $env:RELEASE_ARCHIVE_PASSWORD `
+            -ExpectedKinds $expectedKinds
 
       - name: Build release notes
         shell: pwsh

@@ -3,7 +3,7 @@
   Create password-protected archives for build artifacts.
 
 .DESCRIPTION
-  Recursively scans the input directory for `.exe` / `.apk` files and packs
+  Recursively scans the input directory for `.exe` / `.apk` / `.hap` files and packs
   them into password-protected `.zip` archives with 7-Zip.
 #>
 [CmdletBinding()]
@@ -15,7 +15,9 @@ param(
     [string]$OutputDir,
 
     [Parameter(Mandatory = $true)]
-    [string]$Password
+    [string]$Password,
+
+    [string[]]$ExpectedKinds = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,6 +38,15 @@ function Resolve-SevenZip() {
     throw "7z/7-Zip was not found in PATH or the default install directories."
 }
 
+function Resolve-ArtifactKind([System.IO.FileInfo]$File) {
+    switch ($File.Extension.ToLowerInvariant()) {
+        ".exe" { return "windows" }
+        ".apk" { return "android" }
+        ".hap" { return "harmony" }
+        default { return "" }
+    }
+}
+
 if (-not (Test-Path $InputDir)) {
     throw "Input directory does not exist: $InputDir"
 }
@@ -47,12 +58,32 @@ if ([string]::IsNullOrWhiteSpace($Password)) {
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
 $sevenZip = Resolve-SevenZip
-$files = Get-ChildItem -Path $InputDir -Recurse -File | Where-Object {
-    $_.Extension.ToLowerInvariant() -in @(".apk", ".exe")
-}
+$files = Get-ChildItem -Path $InputDir -Recurse -File |
+    Where-Object { Resolve-ArtifactKind -File $_ } |
+    Sort-Object FullName
 
 if (-not $files) {
-    throw "No .apk or .exe artifacts were found under $InputDir"
+    throw "No .apk, .exe, or .hap artifacts were found under $InputDir"
+}
+
+$foundKinds = @($files |
+    ForEach-Object { Resolve-ArtifactKind -File $_ } |
+    Where-Object { $_ } |
+    Sort-Object -Unique)
+
+# A previous public release silently dropped Harmony assets even though the
+# build job succeeded. Fail fast here instead of publishing a partial release.
+$normalizedExpectedKinds = @($ExpectedKinds |
+    ForEach-Object { $_ -split "," } |
+    ForEach-Object { $_.Trim().ToLowerInvariant() } |
+    Where-Object { $_ } |
+    Sort-Object -Unique)
+
+$missingKinds = @($normalizedExpectedKinds |
+    Where-Object { $foundKinds -notcontains $_ })
+
+if ($missingKinds.Count -gt 0) {
+    throw "Expected release artifacts were not found under ${InputDir}: $($missingKinds -join ', ')"
 }
 
 foreach ($file in $files) {
