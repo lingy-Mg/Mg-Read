@@ -679,7 +679,22 @@ jobs:
         working-directory: source
         run: |
           mkdir -p 构建结果
-          find LegadoArkTS/entry/build -type f -name '*.hap' -print -exec cp {} 构建结果/ \;
+          # Do not sweep every .hap here: hvigor emits signed/unsigned variants in
+          # multiple output directories, and a broad copy silently publishes
+          # duplicate Harmony release archives.
+          mapfile -t selected_haps < <(find LegadoArkTS/entry/build/default/outputs/default -maxdepth 1 -type f -name '*-signed.hap' | sort)
+          if [ "${#selected_haps[@]}" -eq 0 ]; then
+            mapfile -t selected_haps < <(find LegadoArkTS/entry/build -type f -name '*-signed.hap' | sort)
+          fi
+          if [ "${#selected_haps[@]}" -eq 0 ]; then
+            mapfile -t selected_haps < <(find LegadoArkTS/entry/build -type f -name '*.hap' | sort)
+          fi
+          if [ "${#selected_haps[@]}" -eq 0 ]; then
+            echo "No .hap artifacts were produced under LegadoArkTS/entry/build" >&2
+            exit 1
+          fi
+          printf '%s\n' "${selected_haps[@]}"
+          cp "${selected_haps[@]}" 构建结果/
           ls -lah 构建结果
           test -n "$(find 构建结果 -maxdepth 1 -type f -name '*.hap')"
 
@@ -687,7 +702,10 @@ jobs:
         shell: bash
         working-directory: source
         run: |
-          HAP_PATH="$(find 构建结果 -maxdepth 1 -type f -name '*.hap' | head -n 1)"
+          HAP_PATH="$(find 构建结果 -maxdepth 1 -type f -name '*-signed.hap' | sort | head -n 1)"
+          if [ -z "$HAP_PATH" ]; then
+            HAP_PATH="$(find 构建结果 -maxdepth 1 -type f -name '*.hap' | sort | head -n 1)"
+          fi
           test -n "$HAP_PATH"
           unzip -l "$HAP_PATH" | tee /tmp/harmony-hap-list.txt
           grep -q 'libs/arm64-v8a/libentry.so' /tmp/harmony-hap-list.txt
