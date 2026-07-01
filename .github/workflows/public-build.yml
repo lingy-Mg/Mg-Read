@@ -230,11 +230,10 @@ jobs:
 
       - name: Normalize Windows artifacts for public release
         shell: pwsh
-        working-directory: source
         run: |
           node scripts/prepare-public-build-artifacts.mjs `
             windows `
-            构建结果 `
+            source/构建结果 `
             public-build-results/windows `
             "${{ needs.context.outputs.release_version }}"
 
@@ -242,7 +241,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: package-windows
-          path: source/public-build-results/windows/*
+          path: public-build-results/windows/*
           if-no-files-found: error
 
   build_android:
@@ -441,11 +440,10 @@ jobs:
 
       - name: Normalize Android artifacts for public release
         shell: pwsh
-        working-directory: source
         run: |
           node scripts/prepare-public-build-artifacts.mjs `
             android `
-            构建结果 `
+            source/构建结果 `
             public-build-results/android `
             "${{ needs.context.outputs.release_version }}"
 
@@ -453,7 +451,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: package-android
-          path: source/public-build-results/android/*
+          path: public-build-results/android/*
           if-no-files-found: error
 
   build_harmony:
@@ -690,11 +688,10 @@ jobs:
 
       - name: Normalize Harmony artifacts for public release
         shell: bash
-        working-directory: source
         run: |
           node scripts/prepare-public-build-artifacts.mjs \
             harmony \
-            构建结果 \
+            source/构建结果 \
             public-build-results/harmony \
             "${{ needs.context.outputs.release_version }}"
 
@@ -702,7 +699,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: package-harmony
-          path: source/public-build-results/harmony/*
+          path: public-build-results/harmony/*
           if-no-files-found: error
 
   release:
