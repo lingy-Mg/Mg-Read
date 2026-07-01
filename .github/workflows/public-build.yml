@@ -599,6 +599,45 @@ jobs:
           walk(path.join(process.cwd(), "LegadoArkTS"));
           EOF
 
+      - name: Rewrite Harmony signing material paths
+        shell: bash
+        working-directory: source
+        run: |
+          set -euxo pipefail
+          node --input-type=module <<'EOF'
+          import fs from "node:fs";
+          import path from "node:path";
+
+          const workspaceRoot = process.cwd();
+          const buildProfilePath = path.join(workspaceRoot, "LegadoArkTS", "build-profile.json5");
+          const docsDir = path.join(workspaceRoot, "docs");
+          const signingFiles = [
+            { key: "storeFile", fileName: "Mg.p12" },
+            { key: "profile", fileName: "mg阅读Release.p7b" },
+            { key: "certpath", fileName: "mg阅读.cer" },
+          ];
+
+          function escapeRegex(value) {
+            return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          }
+
+          let content = fs.readFileSync(buildProfilePath, "utf8");
+
+          for (const { key, fileName } of signingFiles) {
+            const resolvedPath = path.join(docsDir, fileName);
+            if (!fs.existsSync(resolvedPath)) {
+              throw new Error(`Missing Harmony signing file: ${resolvedPath}`);
+            }
+
+            const normalizedPath = resolvedPath.replace(/\\/g, "/");
+            const matcher = new RegExp(`("${key}"\\s*:\\s*")[^"]*${escapeRegex(fileName)}(")`, "g");
+            content = content.replace(matcher, `$1${normalizedPath}$2`);
+          }
+
+          fs.writeFileSync(buildProfilePath, content);
+          console.log(`rewrote signing paths in ${buildProfilePath}`);
+          EOF
+
       - name: Build Harmony release
         shell: bash
         working-directory: source/LegadoArkTS
