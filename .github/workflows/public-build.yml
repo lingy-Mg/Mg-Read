@@ -167,6 +167,9 @@ jobs:
     needs: context
     if: contains(needs.context.outputs.targets_csv, 'windows')
     steps:
+      - name: Checkout public repo
+        uses: actions/checkout@v4
+
       - name: Checkout private source
         uses: actions/checkout@v4
         with:
@@ -250,6 +253,9 @@ jobs:
     needs: context
     if: contains(needs.context.outputs.targets_csv, 'android')
     steps:
+      - name: Checkout public repo
+        uses: actions/checkout@v4
+
       - name: Checkout private source
         uses: actions/checkout@v4
         with:
@@ -463,6 +469,9 @@ jobs:
       HARMONYOS_CLI_ARCHIVE: commandline-tools-linux-x64-6.1.0.816.zip
       HARMONYOS_CLI_SHA256: 4b21e8a4ce19fc7eb381425a570e936c80067b8a0bef9cdcfe8a49e4764038e2
     steps:
+      - name: Checkout public repo
+        uses: actions/checkout@v4
+
       - name: Checkout private source
         uses: actions/checkout@v4
         with:
