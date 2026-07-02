@@ -1,4 +1,4 @@
-# This workflow builds Windows / Android / Harmony artifacts from the private source repo
+# This workflow builds Windows / Android / macOS / Harmony artifacts from the private source repo
 # and publishes password-protected archives in the public repository releases.
 name: Public Build Bridge
 run-name: >-
@@ -26,16 +26,10 @@ on:
         required: false
         type: string
       targets:
-        description: "Build targets"
+        description: "Build targets (windows,android,macos,harmony,both,all or comma-separated list)"
         required: false
-        type: choice
+        type: string
         default: both
-        options:
-          - both
-          - all
-          - windows
-          - android
-          - harmony
       release_tag:
         description: "Release tag to publish in this public repo"
         required: false
@@ -147,7 +141,7 @@ jobs:
           )
           $targetsCsv = switch ($targetsValue.ToLowerInvariant()) {
             "both" { "windows,android" }
-            "all" { "windows,android,harmony" }
+            "all" { "windows,android,macos,harmony" }
             default { ($targetsValue -replace "\s+", "").ToLowerInvariant() }
           }
 
@@ -468,6 +462,104 @@ jobs:
           path: public-build-results/android/*
           if-no-files-found: error
 
+  build_macos:
+    name: Build macOS
+    runs-on: macos-latest
+    needs: context
+    if: contains(needs.context.outputs.targets_csv, 'macos')
+    steps:
+      - name: Checkout public repo
+        uses: actions/checkout@v4
+
+      - name: Checkout private source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}
+          ref: ${{ needs.context.outputs.checkout_ref }}
+          token: ${{ secrets.PRIVATE_SOURCE_PAT }}
+          path: source
+          fetch-depth: 1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: public-build-macos
+          cache-workspace-crates: "true"
+          workspaces: |
+            source/src-tauri -> target
+
+      - name: Normalize Tauri beforeBuildCommand for macOS runner
+        shell: pwsh
+        working-directory: source
+        run: |
+          $tauriConfigPath = Join-Path $PWD "src-tauri/tauri.conf.json"
+          $content = Get-Content $tauriConfigPath -Raw
+          $updated = $content -replace '"beforeBuildCommand"\s*:\s*"cmd /c pnpm build"', '"beforeBuildCommand": "pnpm build"'
+          if ($updated -eq $content) {
+            throw "Failed to rewrite beforeBuildCommand in src-tauri/tauri.conf.json"
+          }
+          Set-Content -Path $tauriConfigPath -Value $updated -Encoding utf8
+
+      - name: Install dependencies
+        shell: pwsh
+        working-directory: source
+        run: pnpm install --frozen-lockfile
+
+      - name: Disable sccache-only wrappers on hosted runners
+        shell: pwsh
+        working-directory: source
+        run: |
+          node --input-type=module -e @'
+          import fs from "node:fs";
+          const packageJsonPath = "package.json";
+          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+          for (const scriptName of ["build:macos:release"]) {
+            const original = packageJson.scripts?.[scriptName];
+            if (!original) continue;
+            packageJson.scripts[scriptName] = original.replace(/RUSTC_WRAPPER=sccache\s*/g, "");
+          }
+          fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
+          '@
+
+      - name: Build macOS release
+        shell: pwsh
+        working-directory: source
+        run: pnpm run build:macos:release
+
+      - name: Normalize macOS artifacts for public release
+        shell: pwsh
+        run: |
+          node scripts/prepare-public-build-artifacts.mjs `
+            macos `
+            source/构建结果 `
+            public-build-results/macos `
+            "${{ needs.context.outputs.release_version }}"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-macos
+          path: public-build-results/macos/*
+          if-no-files-found: error
+
   build_harmony:
     name: Build Harmony
     runs-on: ubuntu-latest
@@ -744,6 +836,7 @@ jobs:
       - context
       - build_windows
       - build_android
+      - build_macos
       - build_harmony
     if: >-
       always() &&
@@ -751,6 +844,7 @@ jobs:
       (
         needs.build_windows.result == 'success' ||
         needs.build_android.result == 'success' ||
+        needs.build_macos.result == 'success' ||
         needs.build_harmony.result == 'success'
       )
     steps:
@@ -779,6 +873,13 @@ jobs:
         with:
           name: package-android
           path: incoming/android
+
+      - name: Download macOS artifacts
+        if: needs.build_macos.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: package-macos
+          path: incoming/macos
 
       - name: Download Harmony artifacts
         if: needs.build_harmony.result == 'success'
@@ -815,6 +916,7 @@ jobs:
             source_sha        = "${{ needs.context.outputs.source_sha }}"
             targets           = "${{ needs.context.outputs.targets_csv }}"
             windows_result    = "${{ needs.build_windows.result }}"
+            macos_result      = "${{ needs.build_macos.result }}"
             android_result    = "${{ needs.build_android.result }}"
             harmony_result    = "${{ needs.build_harmony.result }}"
             release_tag       = "${{ needs.context.outputs.release_tag }}"
@@ -850,6 +952,9 @@ jobs:
           if ("${{ needs.build_android.result }}" -eq "success") {
             $expectedKinds += "android"
           }
+          if ("${{ needs.build_macos.result }}" -eq "success") {
+            $expectedKinds += "macos"
+          }
           if ("${{ needs.build_harmony.result }}" -eq "success") {
             $expectedKinds += "harmony"
           }
@@ -873,6 +978,7 @@ jobs:
             -SourceSha "${{ needs.context.outputs.source_sha }}" `
             -Targets "${{ needs.context.outputs.targets_csv }}" `
             -WindowsResult "${{ needs.build_windows.result }}" `
+            -MacosResult "${{ needs.build_macos.result }}" `
             -AndroidResult "${{ needs.build_android.result }}" `
             -HarmonyResult "${{ needs.build_harmony.result }}" `
             -WorkflowUrl "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" `
@@ -919,6 +1025,7 @@ jobs:
       - context
       - build_windows
       - build_android
+      - build_macos
       - build_harmony
       - release
     if: always() && !cancelled()
@@ -965,6 +1072,7 @@ jobs:
 
           $buildResults = @(
             @{ Name = "Windows"; Requested = (Test-Requested "windows"); Raw = "${{ needs.build_windows.result }}"; Text = (Convert-TargetResult "windows" "${{ needs.build_windows.result }}") }
+            @{ Name = "macOS"; Requested = (Test-Requested "macos"); Raw = "${{ needs.build_macos.result }}"; Text = (Convert-TargetResult "macos" "${{ needs.build_macos.result }}") }
             @{ Name = "Android"; Requested = (Test-Requested "android"); Raw = "${{ needs.build_android.result }}"; Text = (Convert-TargetResult "android" "${{ needs.build_android.result }}") }
             @{ Name = "Harmony"; Requested = (Test-Requested "harmony"); Raw = "${{ needs.build_harmony.result }}"; Text = (Convert-TargetResult "harmony" "${{ needs.build_harmony.result }}") }
           )
@@ -1003,8 +1111,9 @@ jobs:
           Source sha：$sourceSha
           构建目标：${{ needs.context.outputs.targets_csv }}
           Windows：$($buildResults[0].Text)
-          Android：$($buildResults[1].Text)
-          Harmony：$($buildResults[2].Text)
+          macOS：$($buildResults[1].Text)
+          Android：$($buildResults[2].Text)
+          Harmony：$($buildResults[3].Text)
           Release：$releaseText
           运行链接：https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           "@.Trim()

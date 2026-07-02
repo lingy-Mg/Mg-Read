@@ -34,6 +34,9 @@ param(
     [string]$WindowsResult,
 
     [Parameter(Mandatory = $true)]
+    [string]$MacosResult,
+
+    [Parameter(Mandatory = $true)]
     [string]$AndroidResult,
 
     [Parameter(Mandatory = $true)]
@@ -223,6 +226,7 @@ $noteLines = @(
     "- Source sha：$SourceSha",
     "- 构建目标：$Targets",
     "- Windows：$WindowsResult",
+    "- macOS：$MacosResult",
     "- Android：$AndroidResult",
     "- Harmony：$HarmonyResult",
     "- 工作流运行：$WorkflowUrl",

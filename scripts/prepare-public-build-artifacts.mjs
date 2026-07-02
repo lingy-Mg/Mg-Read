@@ -3,10 +3,10 @@ import { copyFile, mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 
 const [platform, inputDirArg, outputDirArg, releaseVersionArg = ""] = process.argv.slice(2);
-const SUPPORTED_PLATFORMS = new Set(["windows", "android", "harmony"]);
+const SUPPORTED_PLATFORMS = new Set(["windows", "android", "macos", "harmony"]);
 
 function usage() {
-  console.error("Usage: node scripts/prepare-public-build-artifacts.mjs <windows|android|harmony> <inputDir> <outputDir> [releaseVersion]");
+  console.error("Usage: node scripts/prepare-public-build-artifacts.mjs <windows|android|macos|harmony> <inputDir> <outputDir> [releaseVersion]");
 }
 
 async function listFiles(dir) {
@@ -45,6 +45,9 @@ function matchPlatformArtifact(targetPlatform, filePath) {
   if (targetPlatform === "android") {
     return extension === ".apk";
   }
+  if (targetPlatform === "macos") {
+    return extension === ".dmg";
+  }
   return extension === ".hap";
 }
 
@@ -74,6 +77,9 @@ function buildLabel(targetPlatform, filePath) {
   }
   if (targetPlatform === "android") {
     return detectAndroidLabel(filePath);
+  }
+  if (targetPlatform === "macos") {
+    return "macos";
   }
   return "harmony";
 }
