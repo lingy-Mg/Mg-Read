@@ -1,6 +1,14 @@
 # This workflow builds Windows / Android / Harmony artifacts from the private source repo
 # and publishes password-protected archives in the public repository releases.
 name: Public Build Bridge
+run-name: >-
+  Public Build ${{
+    github.event.client_payload.release_version ||
+    inputs.release_version ||
+    github.event.client_payload.release_tag ||
+    inputs.release_tag ||
+    github.ref_name
+  }}
 
 on:
   workflow_dispatch:
