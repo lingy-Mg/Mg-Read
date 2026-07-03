@@ -3,10 +3,10 @@ import { copyFile, mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 
 const [platform, inputDirArg, outputDirArg, releaseVersionArg = ""] = process.argv.slice(2);
-const SUPPORTED_PLATFORMS = new Set(["windows", "android", "macos", "harmony"]);
+const SUPPORTED_PLATFORMS = new Set(["windows", "android", "linux", "macos", "harmony"]);
 
 function usage() {
-  console.error("Usage: node scripts/prepare-public-build-artifacts.mjs <windows|android|macos|harmony> <inputDir> <outputDir> [releaseVersion]");
+  console.error("Usage: node scripts/prepare-public-build-artifacts.mjs <windows|android|linux|macos|harmony> <inputDir> <outputDir> [releaseVersion]");
 }
 
 async function listFiles(dir) {
@@ -38,12 +38,16 @@ function normalizeReleaseToken(value) {
 }
 
 function matchPlatformArtifact(targetPlatform, filePath) {
+  const normalized = filePath.replaceAll("\\", "/").toLowerCase();
   const extension = path.extname(filePath).toLowerCase();
   if (targetPlatform === "windows") {
     return extension === ".exe";
   }
   if (targetPlatform === "android") {
     return extension === ".apk";
+  }
+  if (targetPlatform === "linux") {
+    return normalized.endsWith(".tar.gz");
   }
   if (targetPlatform === "macos") {
     return extension === ".dmg";
@@ -71,12 +75,27 @@ function detectAndroidLabel(filePath) {
   return "android";
 }
 
+function detectLinuxLabel(filePath) {
+  const normalized = filePath.replaceAll("\\", "/").toLowerCase();
+  if (
+    normalized.includes("linux-arm64") ||
+    normalized.includes("linux-aarch64") ||
+    normalized.includes("aarch64-unknown-linux-gnu")
+  ) {
+    return "linux-arm64";
+  }
+  return "linux-x64";
+}
+
 function buildLabel(targetPlatform, filePath) {
   if (targetPlatform === "windows") {
     return "windows";
   }
   if (targetPlatform === "android") {
     return detectAndroidLabel(filePath);
+  }
+  if (targetPlatform === "linux") {
+    return detectLinuxLabel(filePath);
   }
   if (targetPlatform === "macos") {
     return "macos";

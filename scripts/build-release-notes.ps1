@@ -34,6 +34,12 @@ param(
     [string]$WindowsResult,
 
     [Parameter(Mandatory = $true)]
+    [string]$LinuxX64Result,
+
+    [Parameter(Mandatory = $true)]
+    [string]$LinuxArm64Result,
+
+    [Parameter(Mandatory = $true)]
     [string]$MacosResult,
 
     [Parameter(Mandatory = $true)]
@@ -226,6 +232,8 @@ $noteLines = @(
     "- Source sha：$SourceSha",
     "- 构建目标：$Targets",
     "- Windows：$WindowsResult",
+    "- Linux x64：$LinuxX64Result",
+    "- Linux arm64：$LinuxArm64Result",
     "- macOS：$MacosResult",
     "- Android：$AndroidResult",
     "- Harmony：$HarmonyResult",

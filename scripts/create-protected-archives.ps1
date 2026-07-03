@@ -3,7 +3,7 @@
   Create password-protected archives for build artifacts.
 
 .DESCRIPTION
-  Recursively scans the input directory for `.exe` / `.apk` / `.dmg` / `.hap` files and packs
+  Recursively scans the input directory for `.exe` / `.apk` / `.tar.gz` / `.dmg` / `.hap` files and packs
   them into password-protected `.zip` archives with 7-Zip.
 #>
 [CmdletBinding()]
@@ -39,6 +39,14 @@ function Resolve-SevenZip() {
 }
 
 function Resolve-ArtifactKind([System.IO.FileInfo]$File) {
+    $name = $File.Name.ToLowerInvariant()
+    if ($name.EndsWith(".tar.gz")) {
+        if ($name -match 'linux-arm64') {
+            return "linux-arm64"
+        }
+        return "linux-x64"
+    }
+
     switch ($File.Extension.ToLowerInvariant()) {
         ".exe" { return "windows" }
         ".apk" { return "android" }
@@ -64,7 +72,7 @@ $files = Get-ChildItem -Path $InputDir -Recurse -File |
     Sort-Object FullName
 
 if (-not $files) {
-    throw "No .apk, .dmg, .exe, or .hap artifacts were found under $InputDir"
+    throw "No .apk, .dmg, .exe, .hap, or .tar.gz artifacts were found under $InputDir"
 }
 
 $foundKinds = @($files |

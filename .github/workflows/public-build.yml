@@ -1,4 +1,4 @@
-# This workflow builds Windows / Android / macOS / Harmony artifacts from the private source repo
+# This workflow builds Windows / Android / Linux x64 / Linux arm64 / macOS / Harmony artifacts from the private source repo
 # and publishes password-protected archives in the public repository releases.
 name: Public Build Bridge
 run-name: >-
@@ -26,7 +26,7 @@ on:
         required: false
         type: string
       targets:
-        description: "Build targets (windows,android,macos,harmony,both,all or comma-separated list)"
+        description: "Build targets (windows,android,linux,linux-x64,linux-arm64,macos,harmony,both,all or comma-separated list)"
         required: false
         type: string
         default: both
@@ -141,7 +141,8 @@ jobs:
           )
           $targetsCsv = switch ($targetsValue.ToLowerInvariant()) {
             "both" { "windows,android" }
-            "all" { "windows,android,macos,harmony" }
+            "linux" { "linux-x64,linux-arm64" }
+            "all" { "windows,android,linux-x64,linux-arm64,macos,harmony" }
             default { ($targetsValue -replace "\s+", "").ToLowerInvariant() }
           }
 
@@ -460,6 +461,290 @@ jobs:
         with:
           name: package-android
           path: public-build-results/android/*
+          if-no-files-found: error
+
+  build_linux_x64:
+    name: Build Linux x64
+    runs-on: ubuntu-24.04
+    needs: context
+    if: contains(needs.context.outputs.targets_csv, 'linux-x64')
+    steps:
+      - name: Checkout public repo
+        uses: actions/checkout@v4
+
+      - name: Checkout private source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}
+          ref: ${{ needs.context.outputs.checkout_ref }}
+          token: ${{ secrets.PRIVATE_SOURCE_PAT }}
+          path: source
+          fetch-depth: 1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: public-build-linux-x64
+          cache-workspace-crates: "true"
+          workspaces: |
+            source/src-tauri -> target
+
+      - name: Install Linux system dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Normalize Tauri beforeBuildCommand for Linux runner
+        shell: bash
+        working-directory: source
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          tauri_config_path = Path("src-tauri/tauri.conf.json")
+          content = tauri_config_path.read_text(encoding="utf-8")
+          updated = re.sub(
+              r'"beforeBuildCommand"\s*:\s*"cmd /c pnpm build"',
+              '"beforeBuildCommand": "pnpm build"',
+              content,
+              count=1,
+          )
+          if updated == content:
+              raise RuntimeError("Failed to rewrite beforeBuildCommand in src-tauri/tauri.conf.json")
+          tauri_config_path.write_text(updated, encoding="utf-8")
+          PY
+
+      - name: Install dependencies
+        shell: bash
+        working-directory: source
+        run: |
+          set -euxo pipefail
+          pnpm install --frozen-lockfile
+
+      - name: Disable sccache-only wrappers on hosted runners
+        shell: bash
+        working-directory: source
+        run: |
+          set -euxo pipefail
+          node --input-type=module <<'EOF'
+          import fs from "node:fs";
+          const packageJsonPath = "package.json";
+          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+          for (const scriptName of ["build:linux:x64:release"]) {
+            const original = packageJson.scripts?.[scriptName];
+            if (!original) continue;
+            packageJson.scripts[scriptName] = original.replace(/RUSTC_WRAPPER=sccache\s*/g, "");
+          }
+          fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
+          EOF
+
+      - name: Build Linux x64 release
+        shell: bash
+        working-directory: source
+        run: |
+          set -euxo pipefail
+          pnpm run build:linux:x64:release
+
+      - name: Package Linux x64 artifacts
+        shell: bash
+        working-directory: source
+        run: |
+          set -euxo pipefail
+          BIN_PATH="src-tauri/target/x86_64-unknown-linux-gnu/release/legado_tauri"
+          test -f "$BIN_PATH"
+          chmod +x "$BIN_PATH"
+          mkdir -p linux-packages/x64
+          tar -C "$(dirname "$BIN_PATH")" -czf linux-packages/x64/legado_tauri-linux-x64.tar.gz legado_tauri
+          ls -lah linux-packages/x64
+
+      - name: Normalize Linux x64 artifacts for public release
+        shell: bash
+        run: |
+          set -euxo pipefail
+          node scripts/prepare-public-build-artifacts.mjs \
+            linux \
+            source/linux-packages/x64 \
+            public-build-results/linux-x64 \
+            "${{ needs.context.outputs.release_version }}"
+
+      - name: Upload Linux x64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-linux-x64
+          path: public-build-results/linux-x64/*
+          if-no-files-found: error
+
+  build_linux_arm64:
+    name: Build Linux arm64
+    runs-on: ubuntu-24.04-arm
+    needs: context
+    if: contains(needs.context.outputs.targets_csv, 'linux-arm64')
+    steps:
+      - name: Checkout public repo
+        uses: actions/checkout@v4
+
+      - name: Checkout private source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}
+          ref: ${{ needs.context.outputs.checkout_ref }}
+          token: ${{ secrets.PRIVATE_SOURCE_PAT }}
+          path: source
+          fetch-depth: 1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: public-build-linux-arm64
+          cache-workspace-crates: "true"
+          workspaces: |
+            source/src-tauri -> target
+
+      - name: Install Linux system dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Normalize Tauri beforeBuildCommand for Linux runner
+        shell: bash
+        working-directory: source
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          tauri_config_path = Path("src-tauri/tauri.conf.json")
+          content = tauri_config_path.read_text(encoding="utf-8")
+          updated = re.sub(
+              r'"beforeBuildCommand"\s*:\s*"cmd /c pnpm build"',
+              '"beforeBuildCommand": "pnpm build"',
+              content,
+              count=1,
+          )
+          if updated == content:
+              raise RuntimeError("Failed to rewrite beforeBuildCommand in src-tauri/tauri.conf.json")
+          tauri_config_path.write_text(updated, encoding="utf-8")
+          PY
+
+      - name: Install dependencies
+        shell: bash
+        working-directory: source
+        run: |
+          set -euxo pipefail
+          pnpm install --frozen-lockfile
+
+      - name: Disable sccache-only wrappers on hosted runners
+        shell: bash
+        working-directory: source
+        run: |
+          set -euxo pipefail
+          node --input-type=module <<'EOF'
+          import fs from "node:fs";
+          const packageJsonPath = "package.json";
+          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+          for (const scriptName of ["build:linux:arm64:release"]) {
+            const original = packageJson.scripts?.[scriptName];
+            if (!original) continue;
+            packageJson.scripts[scriptName] = original.replace(/RUSTC_WRAPPER=sccache\s*/g, "");
+          }
+          fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
+          EOF
+
+      - name: Build Linux arm64 release
+        shell: bash
+        working-directory: source
+        run: |
+          set -euxo pipefail
+          pnpm run build:linux:arm64:release
+
+      - name: Package Linux arm64 artifacts
+        shell: bash
+        working-directory: source
+        run: |
+          set -euxo pipefail
+          BIN_PATH="src-tauri/target/aarch64-unknown-linux-gnu/release/legado_tauri"
+          test -f "$BIN_PATH"
+          chmod +x "$BIN_PATH"
+          mkdir -p linux-packages/arm64
+          tar -C "$(dirname "$BIN_PATH")" -czf linux-packages/arm64/legado_tauri-linux-arm64.tar.gz legado_tauri
+          ls -lah linux-packages/arm64
+
+      - name: Normalize Linux arm64 artifacts for public release
+        shell: bash
+        run: |
+          set -euxo pipefail
+          node scripts/prepare-public-build-artifacts.mjs \
+            linux \
+            source/linux-packages/arm64 \
+            public-build-results/linux-arm64 \
+            "${{ needs.context.outputs.release_version }}"
+
+      - name: Upload Linux arm64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-linux-arm64
+          path: public-build-results/linux-arm64/*
           if-no-files-found: error
 
   build_macos:
@@ -835,6 +1120,8 @@ jobs:
       - context
       - build_windows
       - build_android
+      - build_linux_x64
+      - build_linux_arm64
       - build_macos
       - build_harmony
     if: >-
@@ -843,6 +1130,8 @@ jobs:
       (
         needs.build_windows.result == 'success' ||
         needs.build_android.result == 'success' ||
+        needs.build_linux_x64.result == 'success' ||
+        needs.build_linux_arm64.result == 'success' ||
         needs.build_macos.result == 'success' ||
         needs.build_harmony.result == 'success'
       )
@@ -872,6 +1161,20 @@ jobs:
         with:
           name: package-android
           path: incoming/android
+
+      - name: Download Linux x64 artifacts
+        if: needs.build_linux_x64.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: package-linux-x64
+          path: incoming/linux-x64
+
+      - name: Download Linux arm64 artifacts
+        if: needs.build_linux_arm64.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: package-linux-arm64
+          path: incoming/linux-arm64
 
       - name: Download macOS artifacts
         if: needs.build_macos.result == 'success'
@@ -915,6 +1218,8 @@ jobs:
             source_sha        = "${{ needs.context.outputs.source_sha }}"
             targets           = "${{ needs.context.outputs.targets_csv }}"
             windows_result    = "${{ needs.build_windows.result }}"
+            linux_x64_result  = "${{ needs.build_linux_x64.result }}"
+            linux_arm64_result = "${{ needs.build_linux_arm64.result }}"
             macos_result      = "${{ needs.build_macos.result }}"
             android_result    = "${{ needs.build_android.result }}"
             harmony_result    = "${{ needs.build_harmony.result }}"
@@ -951,6 +1256,12 @@ jobs:
           if ("${{ needs.build_android.result }}" -eq "success") {
             $expectedKinds += "android"
           }
+          if ("${{ needs.build_linux_x64.result }}" -eq "success") {
+            $expectedKinds += "linux-x64"
+          }
+          if ("${{ needs.build_linux_arm64.result }}" -eq "success") {
+            $expectedKinds += "linux-arm64"
+          }
           if ("${{ needs.build_macos.result }}" -eq "success") {
             $expectedKinds += "macos"
           }
@@ -977,6 +1288,8 @@ jobs:
             -SourceSha "${{ needs.context.outputs.source_sha }}" `
             -Targets "${{ needs.context.outputs.targets_csv }}" `
             -WindowsResult "${{ needs.build_windows.result }}" `
+            -LinuxX64Result "${{ needs.build_linux_x64.result }}" `
+            -LinuxArm64Result "${{ needs.build_linux_arm64.result }}" `
             -MacosResult "${{ needs.build_macos.result }}" `
             -AndroidResult "${{ needs.build_android.result }}" `
             -HarmonyResult "${{ needs.build_harmony.result }}" `
@@ -1024,6 +1337,8 @@ jobs:
       - context
       - build_windows
       - build_android
+      - build_linux_x64
+      - build_linux_arm64
       - build_macos
       - build_harmony
       - release
@@ -1071,8 +1386,10 @@ jobs:
 
           $buildResults = @(
             @{ Name = "Windows"; Requested = (Test-Requested "windows"); Raw = "${{ needs.build_windows.result }}"; Text = (Convert-TargetResult "windows" "${{ needs.build_windows.result }}") }
-            @{ Name = "macOS"; Requested = (Test-Requested "macos"); Raw = "${{ needs.build_macos.result }}"; Text = (Convert-TargetResult "macos" "${{ needs.build_macos.result }}") }
             @{ Name = "Android"; Requested = (Test-Requested "android"); Raw = "${{ needs.build_android.result }}"; Text = (Convert-TargetResult "android" "${{ needs.build_android.result }}") }
+            @{ Name = "Linux x64"; Requested = (Test-Requested "linux-x64"); Raw = "${{ needs.build_linux_x64.result }}"; Text = (Convert-TargetResult "linux-x64" "${{ needs.build_linux_x64.result }}") }
+            @{ Name = "Linux arm64"; Requested = (Test-Requested "linux-arm64"); Raw = "${{ needs.build_linux_arm64.result }}"; Text = (Convert-TargetResult "linux-arm64" "${{ needs.build_linux_arm64.result }}") }
+            @{ Name = "macOS"; Requested = (Test-Requested "macos"); Raw = "${{ needs.build_macos.result }}"; Text = (Convert-TargetResult "macos" "${{ needs.build_macos.result }}") }
             @{ Name = "Harmony"; Requested = (Test-Requested "harmony"); Raw = "${{ needs.build_harmony.result }}"; Text = (Convert-TargetResult "harmony" "${{ needs.build_harmony.result }}") }
           )
 
@@ -1110,9 +1427,11 @@ jobs:
           Source sha：$sourceSha
           构建目标：${{ needs.context.outputs.targets_csv }}
           Windows：$($buildResults[0].Text)
-          macOS：$($buildResults[1].Text)
-          Android：$($buildResults[2].Text)
-          Harmony：$($buildResults[3].Text)
+          Android：$($buildResults[1].Text)
+          Linux x64：$($buildResults[2].Text)
+          Linux arm64：$($buildResults[3].Text)
+          macOS：$($buildResults[4].Text)
+          Harmony：$($buildResults[5].Text)
           Release：$releaseText
           运行链接：https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           "@.Trim()
