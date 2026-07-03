@@ -132,7 +132,10 @@ async function main() {
     labelCounts.set(label, nextCount);
 
     const duplicateSuffix = nextCount === 1 ? "" : `-${nextCount}`;
-    const extension = path.extname(sourcePath).toLowerCase();
+    const lowerSourcePath = sourcePath.toLowerCase();
+    const extension = platform === "linux" && lowerSourcePath.endsWith(".tar.gz")
+      ? ".tar.gz"
+      : path.extname(sourcePath).toLowerCase();
     const fileName = `MgRead-${label}-${releaseToken}${duplicateSuffix}${extension}`;
     const destinationPath = path.join(outputDir, fileName);
 

@@ -40,11 +40,13 @@ function Resolve-SevenZip() {
 
 function Resolve-ArtifactKind([System.IO.FileInfo]$File) {
     $name = $File.Name.ToLowerInvariant()
-    if ($name.EndsWith(".tar.gz")) {
+    if ($name.EndsWith(".tar.gz") -or $name.EndsWith(".gz")) {
         if ($name -match 'linux-arm64') {
             return "linux-arm64"
         }
-        return "linux-x64"
+        if ($name -match 'linux-x64') {
+            return "linux-x64"
+        }
     }
 
     switch ($File.Extension.ToLowerInvariant()) {
