@@ -615,10 +615,8 @@ jobs:
             ${{ runner.os }}-public-build-harmony-deps-
           path: |
             ~/.ohpm
-            ~/.npm
             source/LegadoArkTS/oh_modules
             source/LegadoArkTS/.hvigor
-            source/LegadoArkTS/node_modules
 
       - name: Install HarmonyOS SDK
         shell: bash
@@ -771,7 +769,8 @@ jobs:
         run: |
           set -euxo pipefail
           ohpm install --all
-          hvigorw clean --no-daemon --stacktrace
+          # GitHub-hosted runners start from a fresh checkout, so an explicit
+          # clean only adds latency and throws away reusable hvigor state.
           hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace
 
       - name: Collect Harmony artifacts
