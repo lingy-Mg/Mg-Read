@@ -29,7 +29,7 @@ on:
         description: "Build targets (windows,android,linux,linux-x64,linux-arm64,macos,harmony,both,all or comma-separated list)"
         required: false
         type: string
-        default: both
+        default: all
       release_tag:
         description: "Release tag to publish in this public repo"
         required: false
@@ -137,7 +137,7 @@ jobs:
           $targetsValue = Pick-First @(
             $env:EVENT_TARGETS,
             $env:INPUT_TARGETS,
-            "both"
+            "all"
           )
           $targetsCsv = switch ($targetsValue.ToLowerInvariant()) {
             "both" { "windows,android" }
@@ -221,7 +221,8 @@ jobs:
           import fs from "node:fs";
           const packageJsonPath = "package.json";
           const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-          for (const scriptName of ["build:windows:release"]) {
+          // 新模板主入口是 `pnpm build -- windows release`；旧长脚本名仅作为兼容别名保留。
+          for (const scriptName of ["build", "build:windows:release"]) {
             const original = packageJson.scripts?.[scriptName];
             if (!original) continue;
             packageJson.scripts[scriptName] = original.replace(/RUSTC_WRAPPER=sccache\s*/g, "");
@@ -232,7 +233,7 @@ jobs:
       - name: Build Windows release
         shell: pwsh
         working-directory: source
-        run: pnpm run build:windows:release
+        run: pnpm build -- windows release
 
       - name: Normalize Windows artifacts for public release
         shell: pwsh
@@ -300,7 +301,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
 
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@v2
@@ -423,6 +424,7 @@ jobs:
           const packageJsonPath = "package.json";
           const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
           for (const scriptName of [
+            "build",
             "build:android:release",
             "build:android:release:armv7",
             "build:android:release:all"
@@ -445,7 +447,7 @@ jobs:
           $env:CMAKE_GENERATOR = "Ninja"
           $env:CMAKE_MAKE_PROGRAM = $ninja.Source
           $env:GRADLE_OPTS = "-Dorg.gradle.java.home=$env:JAVA_HOME"
-          pnpm run build:android:release
+          pnpm build -- android all release
 
       - name: Normalize Android artifacts for public release
         shell: pwsh
@@ -562,7 +564,7 @@ jobs:
           import fs from "node:fs";
           const packageJsonPath = "package.json";
           const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-          for (const scriptName of ["build:linux:x64:release"]) {
+          for (const scriptName of ["build", "build:linux:x64:release"]) {
             const original = packageJson.scripts?.[scriptName];
             if (!original) continue;
             packageJson.scripts[scriptName] = original.replace(/RUSTC_WRAPPER=sccache\s*/g, "");
@@ -575,7 +577,7 @@ jobs:
         working-directory: source
         run: |
           set -euxo pipefail
-          pnpm run build:linux:x64:release
+          pnpm build -- linux x64 release
 
       - name: Package Linux x64 artifacts
         shell: bash
@@ -705,7 +707,7 @@ jobs:
           import fs from "node:fs";
           const packageJsonPath = "package.json";
           const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-          for (const scriptName of ["build:linux:arm64:release"]) {
+          for (const scriptName of ["build", "build:linux:arm64:release"]) {
             const original = packageJson.scripts?.[scriptName];
             if (!original) continue;
             packageJson.scripts[scriptName] = original.replace(/RUSTC_WRAPPER=sccache\s*/g, "");
@@ -718,7 +720,7 @@ jobs:
         working-directory: source
         run: |
           set -euxo pipefail
-          pnpm run build:linux:arm64:release
+          pnpm build -- linux arm64 release
 
       - name: Package Linux arm64 artifacts
         shell: bash
@@ -818,7 +820,7 @@ jobs:
           import fs from "node:fs";
           const packageJsonPath = "package.json";
           const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-          for (const scriptName of ["build:macos:release"]) {
+          for (const scriptName of ["build", "build:macos:release"]) {
             const original = packageJson.scripts?.[scriptName];
             if (!original) continue;
             packageJson.scripts[scriptName] = original.replace(/RUSTC_WRAPPER=sccache\s*/g, "");
@@ -829,7 +831,7 @@ jobs:
       - name: Build macOS release
         shell: pwsh
         working-directory: source
-        run: pnpm run build:macos:release
+        run: pnpm build -- macos release
 
       - name: Normalize macOS artifacts for public release
         shell: pwsh
@@ -953,7 +955,7 @@ jobs:
         shell: bash
         working-directory: source
         run: |
-          pnpm run build:harmony
+          pnpm build -- harmony
 
       - name: Verify Harmony toolchain
         shell: bash
@@ -1148,6 +1150,8 @@ jobs:
           ref: ${{ needs.context.outputs.source_sha }}
           token: ${{ secrets.PRIVATE_SOURCE_PAT }}
           path: source
+          # Release notes compare the previous packaged commit with this build's commit.
+          # A shallow checkout would make the earlier commit unavailable to git log.
           fetch-depth: 0
 
       - name: Download Windows artifacts
@@ -1283,7 +1287,6 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $currentTag = "${{ needs.context.outputs.release_tag }}"
-          $currentVersion = "${{ needs.context.outputs.release_version }}"
           $sourceRepository = "${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}"
           $sourceRef = "${{ needs.context.outputs.source_ref }}"
           $sourceSha = "${{ needs.context.outputs.source_sha }}"
@@ -1327,14 +1330,14 @@ jobs:
                     if ($LASTEXITCODE -ne 0) {
                       $changeSummary += "- 上一版提交 ID ``$previousSha`` 不是本次提交 ID ``$sourceSha`` 的祖先，无法按线性历史生成日志。"
                     } else {
-                    $range = "$previousSha..$sourceSha"
-                    $commitLines = @((& git -C source log $range --pretty=format:%H%x09%s) -split "`r?`n" | Where-Object { $_ })
-                    $commitCount = [int](& git -C source rev-list --count $range)
-                    $changeSummary += "- 上次发布标签：$($previousRelease.tag_name)"
-                    $changeSummary += "- 提交区间起点（上次打包）：``$previousSha``"
-                    $changeSummary += "- 提交区间终点（本次打包）：``$sourceSha``"
-                    $changeSummary += "- 提交区间：``$range``"
-                    $changeSummary += "- 自上次打包以来新增提交：$commitCount 个"
+                      $range = "$previousSha..$sourceSha"
+                      $commitLines = @((& git -C source log $range --pretty=format:%H%x09%s) -split "`r?`n" | Where-Object { $_ })
+                      $commitCount = [int](& git -C source rev-list --count $range)
+                      $changeSummary += "- 上次发布标签：$($previousRelease.tag_name)"
+                      $changeSummary += "- 提交区间起点（上次打包）：``$previousSha``"
+                      $changeSummary += "- 提交区间终点（本次打包）：``$sourceSha``"
+                      $changeSummary += "- 提交区间：``$range``"
+                      $changeSummary += "- 自上次打包以来新增提交：$commitCount 个"
                     }
                   }
                 }
