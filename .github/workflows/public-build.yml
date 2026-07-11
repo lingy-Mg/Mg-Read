@@ -52,6 +52,9 @@ env:
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK_VERSION: "27.2.12479018"
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: "5"
+  # build-command.mjs honors this contract and calls rustc directly. Do not
+  # rewrite package.json scripts: the parameterized entry no longer embeds wrappers there.
+  LEGADO_DISABLE_SCCACHE: "1"
 
 jobs:
   context:
@@ -212,23 +215,6 @@ jobs:
         shell: pwsh
         working-directory: source
         run: pnpm install --frozen-lockfile
-
-      - name: Disable sccache-only wrappers on hosted runners
-        shell: pwsh
-        working-directory: source
-        run: |
-          node --input-type=module -e @'
-          import fs from "node:fs";
-          const packageJsonPath = "package.json";
-          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-          // 新模板主入口是 `pnpm build -- windows release`；旧长脚本名仅作为兼容别名保留。
-          for (const scriptName of ["build", "build:windows:release"]) {
-            const original = packageJson.scripts?.[scriptName];
-            if (!original) continue;
-            packageJson.scripts[scriptName] = original.replace(/RUSTC_WRAPPER=sccache\s*/g, "");
-          }
-          fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
-          '@
 
       - name: Build Windows release
         shell: pwsh
@@ -415,27 +401,6 @@ jobs:
         working-directory: source
         run: pnpm install --frozen-lockfile
 
-      - name: Disable sccache-only wrappers on hosted runners
-        shell: pwsh
-        working-directory: source
-        run: |
-          node --input-type=module -e @'
-          import fs from "node:fs";
-          const packageJsonPath = "package.json";
-          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-          for (const scriptName of [
-            "build",
-            "build:android:release",
-            "build:android:release:armv7",
-            "build:android:release:all"
-          ]) {
-            const original = packageJson.scripts?.[scriptName];
-            if (!original) continue;
-            packageJson.scripts[scriptName] = original.replace(/RUSTC_WRAPPER=sccache\s*/g, "");
-          }
-          fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
-          '@
-
       - name: Build Android release
         shell: pwsh
         working-directory: source
@@ -554,23 +519,6 @@ jobs:
         run: |
           set -euxo pipefail
           pnpm install --frozen-lockfile
-
-      - name: Disable sccache-only wrappers on hosted runners
-        shell: bash
-        working-directory: source
-        run: |
-          set -euxo pipefail
-          node --input-type=module <<'EOF'
-          import fs from "node:fs";
-          const packageJsonPath = "package.json";
-          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-          for (const scriptName of ["build", "build:linux:x64:release"]) {
-            const original = packageJson.scripts?.[scriptName];
-            if (!original) continue;
-            packageJson.scripts[scriptName] = original.replace(/RUSTC_WRAPPER=sccache\s*/g, "");
-          }
-          fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
-          EOF
 
       - name: Build Linux x64 release
         shell: bash
@@ -698,23 +646,6 @@ jobs:
           set -euxo pipefail
           pnpm install --frozen-lockfile
 
-      - name: Disable sccache-only wrappers on hosted runners
-        shell: bash
-        working-directory: source
-        run: |
-          set -euxo pipefail
-          node --input-type=module <<'EOF'
-          import fs from "node:fs";
-          const packageJsonPath = "package.json";
-          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-          for (const scriptName of ["build", "build:linux:arm64:release"]) {
-            const original = packageJson.scripts?.[scriptName];
-            if (!original) continue;
-            packageJson.scripts[scriptName] = original.replace(/RUSTC_WRAPPER=sccache\s*/g, "");
-          }
-          fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
-          EOF
-
       - name: Build Linux arm64 release
         shell: bash
         working-directory: source
@@ -811,22 +742,6 @@ jobs:
         shell: pwsh
         working-directory: source
         run: pnpm install --frozen-lockfile
-
-      - name: Disable sccache-only wrappers on hosted runners
-        shell: pwsh
-        working-directory: source
-        run: |
-          node --input-type=module -e @'
-          import fs from "node:fs";
-          const packageJsonPath = "package.json";
-          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-          for (const scriptName of ["build", "build:macos:release"]) {
-            const original = packageJson.scripts?.[scriptName];
-            if (!original) continue;
-            packageJson.scripts[scriptName] = original.replace(/RUSTC_WRAPPER=sccache\s*/g, "");
-          }
-          fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
-          '@
 
       - name: Build macOS release
         shell: pwsh
