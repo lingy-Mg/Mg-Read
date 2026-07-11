@@ -546,7 +546,7 @@ jobs:
         working-directory: source
         run: |
           set -euxo pipefail
-          BIN_PATH="src-tauri/target/x86_64-unknown-linux-gnu/release/legado_tauri"
+          BIN_PATH="apps/mg-read/src-tauri/target/x86_64-unknown-linux-gnu/release/legado_tauri"
           test -f "$BIN_PATH"
           chmod +x "$BIN_PATH"
           mkdir -p linux-packages/x64
@@ -672,7 +672,7 @@ jobs:
         working-directory: source
         run: |
           set -euxo pipefail
-          BIN_PATH="src-tauri/target/aarch64-unknown-linux-gnu/release/legado_tauri"
+          BIN_PATH="apps/mg-read/src-tauri/target/aarch64-unknown-linux-gnu/release/legado_tauri"
           test -f "$BIN_PATH"
           chmod +x "$BIN_PATH"
           mkdir -p linux-packages/arm64
