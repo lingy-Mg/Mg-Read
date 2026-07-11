@@ -406,9 +406,16 @@ jobs:
         working-directory: source
         run: |
           $ndkHome = Join-Path $env:ANDROID_HOME "ndk\${env:ANDROID_NDK_VERSION}"
+          # The private checkout keeps Windows linker settings for local Jenkins.
+          # Cargo propagates them to cc-rs, so override them with this Linux runner's NDK.
+          $toolchainBin = Join-Path $ndkHome "toolchains/llvm/prebuilt/linux-x86_64/bin"
+          $androidClang = Join-Path $toolchainBin "aarch64-linux-android24-clang"
           $ninja = Get-Command ninja -ErrorAction Stop
           $env:ANDROID_NDK_HOME = $ndkHome
           $env:NDK_HOME = $ndkHome
+          $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = $androidClang
+          $env:CC_aarch64_linux_android = $androidClang
+          $env:AR_aarch64_linux_android = Join-Path $toolchainBin "llvm-ar"
           $env:CMAKE_GENERATOR = "Ninja"
           $env:CMAKE_MAKE_PROGRAM = $ninja.Source
           $env:GRADLE_OPTS = "-Dorg.gradle.java.home=$env:JAVA_HOME"
