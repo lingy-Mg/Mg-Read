@@ -342,7 +342,9 @@ jobs:
             throw "Missing secret: ANDROID_KEY_PASSWORD"
           }
 
-          $androidDir = Join-Path $PWD "source/src-tauri/gen/android"
+          # The generated Android Gradle project belongs to the MgRead app.
+          # Writing to the historical root src-tauri path leaves signing values null.
+          $androidDir = Join-Path $PWD "source/apps/mg-read/src-tauri/gen/android"
           $androidAppDir = Join-Path $androidDir "app"
           $keystorePath = Join-Path $androidAppDir "legado.jks"
           $keyPropsPath = Join-Path $androidDir "key.properties"
