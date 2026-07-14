@@ -432,6 +432,7 @@ jobs:
           $env:CMAKE_MAKE_PROGRAM = $ninja.Source
           # Tauri mobile plugin generation can race while copying its shared Kotlin API directory.
           # Preserve normal parallel performance and retry only that known transient failure.
+          $env:GRADLE_OPTS = "-Dorg.gradle.java.home=$env:JAVA_HOME"
           $androidBuildLog = Join-Path $env:RUNNER_TEMP "mgread-android-build.log"
           $androidBuildAttempt = 1
           while ($true) {
@@ -449,7 +450,6 @@ jobs:
             Remove-Item -LiteralPath $tauriApiDir -Recurse -Force -ErrorAction SilentlyContinue
             $androidBuildAttempt++
           }
-          $env:GRADLE_OPTS = "-Dorg.gradle.java.home=$env:JAVA_HOME"
 
       - name: Normalize Android artifacts for public release
         shell: pwsh
