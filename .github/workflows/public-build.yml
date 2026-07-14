@@ -830,6 +830,9 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Setup Rust for Tauri OHOS test build
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Restore Harmony dependency caches
         uses: actions/cache@v4
         with:
@@ -870,6 +873,9 @@ jobs:
           echo "HOS_SDK_HOME=${sdk_home}" >> "${GITHUB_ENV}"
           echo "HAP_SIGN_TOOL_PATH=${hap_sign_tool_path}" >> "${GITHUB_ENV}"
           echo "OHPM_HOME=${tools_dir}/ohpm" >> "${GITHUB_ENV}"
+          # The experimental Tauri CLI reads this DevEco command-line-tools
+          # root directly; this is deliberately separate from the ArkTS HAP.
+          echo "DEV_ECO_STUDIO_INSTALL_PATH=${tools_dir}" >> "${GITHUB_ENV}"
           echo "${tools_dir}/bin" >> "${GITHUB_PATH}"
 
       - name: Configure Harmony registries
@@ -885,11 +891,64 @@ jobs:
         working-directory: source
         run: pnpm install --frozen-lockfile
 
+      - name: Install isolated Tauri OHOS CLI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # Do not install this experimental branch into ~/.cargo: the default
+          # desktop CLI must remain the mainline Tauri toolchain.
+          cargo install tauri-cli \
+            --git https://github.com/tauri-apps/tauri \
+            --branch feat/open-harmony \
+            --root "${HOME}/.cargo-tauri-ohos" \
+            --force
+          "${HOME}/.cargo-tauri-ohos/bin/cargo-tauri" ohos build --help
+
+      - name: Normalize Tauri OHOS beforeBuildCommand for Linux runner
+        shell: bash
+        working-directory: source
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          tauri_config_path = Path("src-tauri/tauri.conf.json")
+          content = tauri_config_path.read_text(encoding="utf-8")
+          updated = re.sub(
+              r'"beforeBuildCommand"\s*:\s*"cmd /c pnpm build"',
+              '"beforeBuildCommand": "pnpm build"',
+              content,
+              count=1,
+          )
+          if updated == content:
+              raise RuntimeError("Failed to rewrite beforeBuildCommand in src-tauri/tauri.conf.json")
+          tauri_config_path.write_text(updated, encoding="utf-8")
+          PY
+
       - name: Sync Harmony rawfile web bundle
         shell: bash
         working-directory: source
         run: |
           pnpm build -- harmony
+
+      - name: Build Tauri OHOS test HAP
+        shell: bash
+        working-directory: source
+        run: |
+          set -euxo pipefail
+          tauri_ohos_cli="${HOME}/.cargo-tauri-ohos/bin/cargo-tauri"
+          hap_path="src-tauri/gen/ohos/entry/build/default/outputs/default/entry-default-unsigned.hap"
+          test -x "${tauri_ohos_cli}"
+          "${tauri_ohos_cli}" ohos build --ci --target aarch64
+          test -f "${hap_path}"
+          # Keep this experimental, unsigned package distinguishable from the
+          # signed ArkTS Harmony release artifact collected below.
+          mkdir -p 构建结果
+          cp "${hap_path}" "构建结果/MgRead-harmony-tauri-ohos-test-unsigned.hap"
+          unzip -l "构建结果/MgRead-harmony-tauri-ohos-test-unsigned.hap" | tee /tmp/tauri-ohos-hap-list.txt
+          grep -q 'libs/arm64-v8a/libentry.so' /tmp/tauri-ohos-hap-list.txt
+          grep -q 'libs/arm64-v8a/liblegado_tauri_lib.so' /tmp/tauri-ohos-hap-list.txt
 
       - name: Verify Harmony toolchain
         shell: bash
@@ -1001,6 +1060,7 @@ jobs:
         working-directory: source
         run: |
           mkdir -p 构建结果
+          test -f "构建结果/MgRead-harmony-tauri-ohos-test-unsigned.hap"
           # Do not sweep every .hap here: hvigor emits signed/unsigned variants in
           # multiple output directories, and a broad copy silently publishes
           # duplicate Harmony release archives.
