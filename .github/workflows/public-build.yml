@@ -521,14 +521,20 @@ jobs:
 
           tauri_config_path = Path("src-tauri/tauri.conf.json")
           content = tauri_config_path.read_text(encoding="utf-8")
-          updated = re.sub(
+          before_build_updated = re.sub(
               r'"beforeBuildCommand"\s*:\s*"cmd /c pnpm build"',
               '"beforeBuildCommand": "pnpm build"',
               content,
               count=1,
           )
+          updated = re.sub(
+              r'"frontendDist"\s*:\s*"\.\./dist"',
+              '"frontendDist": "../apps/mg-read/dist"',
+              before_build_updated,
+              count=1,
+          )
           if updated == content:
-              raise RuntimeError("Failed to rewrite beforeBuildCommand in src-tauri/tauri.conf.json")
+              raise RuntimeError("Failed to rewrite Tauri build settings in src-tauri/tauri.conf.json")
           tauri_config_path.write_text(updated, encoding="utf-8")
           PY
 
@@ -647,14 +653,20 @@ jobs:
 
           tauri_config_path = Path("src-tauri/tauri.conf.json")
           content = tauri_config_path.read_text(encoding="utf-8")
-          updated = re.sub(
+          before_build_updated = re.sub(
               r'"beforeBuildCommand"\s*:\s*"cmd /c pnpm build"',
               '"beforeBuildCommand": "pnpm build"',
               content,
               count=1,
           )
+          updated = re.sub(
+              r'"frontendDist"\s*:\s*"\.\./dist"',
+              '"frontendDist": "../apps/mg-read/dist"',
+              before_build_updated,
+              count=1,
+          )
           if updated == content:
-              raise RuntimeError("Failed to rewrite beforeBuildCommand in src-tauri/tauri.conf.json")
+              raise RuntimeError("Failed to rewrite Tauri build settings in src-tauri/tauri.conf.json")
           tauri_config_path.write_text(updated, encoding="utf-8")
           PY
 
@@ -915,14 +927,20 @@ jobs:
 
           tauri_config_path = Path("src-tauri/tauri.conf.json")
           content = tauri_config_path.read_text(encoding="utf-8")
-          updated = re.sub(
+          before_build_updated = re.sub(
               r'"beforeBuildCommand"\s*:\s*"cmd /c pnpm build"',
               '"beforeBuildCommand": "pnpm build"',
               content,
               count=1,
           )
+          updated = re.sub(
+              r'"frontendDist"\s*:\s*"\.\./dist"',
+              '"frontendDist": "../apps/mg-read/dist"',
+              before_build_updated,
+              count=1,
+          )
           if updated == content:
-              raise RuntimeError("Failed to rewrite beforeBuildCommand in src-tauri/tauri.conf.json")
+              raise RuntimeError("Failed to rewrite Tauri build settings in src-tauri/tauri.conf.json")
           tauri_config_path.write_text(updated, encoding="utf-8")
           PY
 
