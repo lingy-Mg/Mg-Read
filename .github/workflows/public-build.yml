@@ -430,11 +430,26 @@ jobs:
           $env:AR_aarch64_linux_android = Join-Path $toolchainBin "llvm-ar"
           $env:CMAKE_GENERATOR = "Ninja"
           $env:CMAKE_MAKE_PROGRAM = $ninja.Source
-          # Tauri mobile plugin generation copies a shared Kotlin API directory.
-          # Parallel Cargo jobs can remove it during that copy on hosted Linux.
-          $env:CARGO_BUILD_JOBS = "1"
+          # Tauri mobile plugin generation can race while copying its shared Kotlin API directory.
+          # Preserve normal parallel performance and retry only that known transient failure.
+          $androidBuildLog = Join-Path $env:RUNNER_TEMP "mgread-android-build.log"
+          $androidBuildAttempt = 1
+          while ($true) {
+            & pnpm build -- android all release 2>&1 | Tee-Object -FilePath $androidBuildLog
+            $androidBuildExitCode = $LASTEXITCODE
+            if ($androidBuildExitCode -eq 0) {
+              break
+            }
+            $isTauriApiCopyRace = $androidBuildAttempt -eq 1 -and (Select-String -LiteralPath $androidBuildLog -SimpleMatch "tauri-plugin: failed to copy tauri-api" -Quiet)
+            if (-not $isTauriApiCopyRace) {
+              exit $androidBuildExitCode
+            }
+            Write-Warning "Retrying Android build after Tauri Kotlin API copy race."
+            $tauriApiDir = Join-Path $PWD "src-tauri/vendor/tauri-plugin-opener/android/.tauri/tauri-api"
+            Remove-Item -LiteralPath $tauriApiDir -Recurse -Force -ErrorAction SilentlyContinue
+            $androidBuildAttempt++
+          }
           $env:GRADLE_OPTS = "-Dorg.gradle.java.home=$env:JAVA_HOME"
-          pnpm build -- android all release
 
       - name: Normalize Android artifacts for public release
         shell: pwsh
