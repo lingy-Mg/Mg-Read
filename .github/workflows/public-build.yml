@@ -429,7 +429,7 @@ jobs:
           $env:CC_aarch64_linux_android = $androidClang
           $env:AR_aarch64_linux_android = Join-Path $toolchainBin "llvm-ar"
           $env:CMAKE_GENERATOR = "Ninja"
-$env:CMAKE_MAKE_PROGRAM = $ninja.Source
+          $env:CMAKE_MAKE_PROGRAM = $ninja.Source
           # Tauri mobile plugin generation copies a shared Kotlin API directory.
           # Parallel Cargo jobs can remove it during that copy on hosted Linux.
           $env:CARGO_BUILD_JOBS = "1"
