@@ -87,6 +87,16 @@ function detectLinuxLabel(filePath) {
   return "linux-x64";
 }
 
+function detectHarmonyLabel(filePath) {
+  const normalized = filePath.replaceAll("\\", "/").toLowerCase();
+  // This HAP is a CI-only proof for the experimental Tauri OHOS line. It is
+  // intentionally unsigned and must not be presented as the native release.
+  if (normalized.includes("tauri-ohos-test-unsigned")) {
+    return "harmony-tauri-ohos-test-unsigned";
+  }
+  return "harmony";
+}
+
 function buildLabel(targetPlatform, filePath) {
   if (targetPlatform === "windows") {
     return "windows";
@@ -100,7 +110,7 @@ function buildLabel(targetPlatform, filePath) {
   if (targetPlatform === "macos") {
     return "macos";
   }
-  return "harmony";
+  return detectHarmonyLabel(filePath);
 }
 
 async function main() {
