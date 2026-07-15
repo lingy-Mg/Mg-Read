@@ -1319,7 +1319,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "${{ needs.context.outputs.release_tag }}"
-          $title = "Legado Tauri ${{ needs.context.outputs.release_version }}"
+          $title = "MgRead ${{ needs.context.outputs.release_version }}"
           $notesFile = "release-notes.md"
 
           & gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
