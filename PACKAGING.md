@@ -44,7 +44,7 @@ corepack pnpm@11.12.0 install --frozen-lockfile
 | macOS universal | `corepack pnpm@11.12.0 build -- macos release` | macOS、Apple x64/arm64 Rust targets |
 | Harmony Web 资源 | `corepack pnpm@11.12.0 build -- harmony` | Node.js 24、pnpm 11.12.0 |
 
-桌面、Android 和 macOS 归一化产物写入私库根目录的 `构建结果/`。Linux 公共 CI 额外从 `apps/mg-read/src-tauri/target/<target>/release/mg-read` 创建 `.tar.gz`。Harmony 公共 CI 会把实验 Tauri CLI 与 `ohrs 1.4.2` 一起隔离安装到 `~/.cargo-tauri-ohos/bin`；缺少 `ohrs` 时 `cargo-tauri ohos build` 会在前端构建完成后失败。Harmony 正式可分发包由 `LegadoArkTS` 的 release Hvigor 流程生成；`MgRead-harmony-tauri-ohos-test-unsigned.hap` 只验证 Tauri OHOS 原生库，不是可安装发布包。
+桌面、Android 和 macOS 归一化产物写入私库根目录的 `构建结果/`。Linux 公共 CI 额外从 `apps/mg-read/src-tauri/target/<target>/release/mg-read` 创建 `.tar.gz`。Harmony 公共 CI 需要 Rust 的 `aarch64-unknown-linux-ohos` target，并把实验 Tauri CLI 与 `ohrs 1.4.2` 一起隔离安装到 `~/.cargo-tauri-ohos/bin`；缺少 target 会报找不到 `core` / `std`，缺少 `ohrs` 会在前端构建完成后无法启动原生构建。Harmony 正式可分发包由 `LegadoArkTS` 的 release Hvigor 流程生成；`MgRead-harmony-tauri-ohos-test-unsigned.hap` 只验证 Tauri OHOS 原生库，不是可安装发布包。
 
 ## 模板上线同步
 
