@@ -212,7 +212,7 @@ jobs:
           shared-key: public-build-windows
           cache-workspace-crates: "true"
           workspaces: |
-            source/src-tauri -> target
+            source/apps/mg-read/src-tauri -> target
 
       - name: Install dependencies
         shell: pwsh
@@ -278,11 +278,11 @@ jobs:
           java-version: "21"
           cache: gradle
           cache-dependency-path: |
-            source/src-tauri/gen/android/*.gradle*
-            source/src-tauri/gen/android/**/build.gradle*
-            source/src-tauri/gen/android/**/settings.gradle*
-            source/src-tauri/gen/android/**/gradle-wrapper.properties
-            source/src-tauri/gen/android/gradle.properties
+            source/apps/mg-read/src-tauri/gen/android/*.gradle*
+            source/apps/mg-read/src-tauri/gen/android/**/build.gradle*
+            source/apps/mg-read/src-tauri/gen/android/**/settings.gradle*
+            source/apps/mg-read/src-tauri/gen/android/**/gradle-wrapper.properties
+            source/apps/mg-read/src-tauri/gen/android/gradle.properties
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -298,7 +298,7 @@ jobs:
           shared-key: public-build-android
           cache-workspace-crates: "true"
           workspaces: |
-            source/src-tauri -> target
+            source/apps/mg-read/src-tauri -> target
 
       - name: Ensure Ninja
         shell: pwsh
@@ -346,7 +346,7 @@ jobs:
           }
 
           # The generated Android Gradle project belongs to the MgRead app.
-          # Writing to the historical root src-tauri path leaves signing values null.
+          # Signing must target the MgRead app host rather than a removed root Tauri directory.
           $androidDir = Join-Path $PWD "source/apps/mg-read/src-tauri/gen/android"
           $androidAppDir = Join-Path $androidDir "app"
           $keystorePath = Join-Path $androidAppDir "legado.jks"
@@ -364,7 +364,7 @@ jobs:
       - name: Rewrite Android Gradle JDK path for the runner
         shell: pwsh
         run: |
-          $gradlePropsPath = Join-Path $PWD "source/src-tauri/gen/android/gradle.properties"
+          $gradlePropsPath = Join-Path $PWD "source/apps/mg-read/src-tauri/gen/android/gradle.properties"
           $content = Get-Content $gradlePropsPath -Raw
           $escapedJavaHome = $env:JAVA_HOME.Replace("\", "\\")
           $updated = [Regex]::Replace(
@@ -373,18 +373,6 @@ jobs:
             "org.gradle.java.home=$escapedJavaHome"
           )
           Set-Content -Path $gradlePropsPath -Value $updated -Encoding utf8
-
-      - name: Normalize Tauri beforeBuildCommand for Linux Android runner
-        shell: pwsh
-        working-directory: source
-        run: |
-          $tauriConfigPath = Join-Path $PWD "src-tauri/tauri.conf.json"
-          $content = Get-Content $tauriConfigPath -Raw
-          $updated = $content -replace '"beforeBuildCommand"\s*:\s*"cmd /c pnpm build"', '"beforeBuildCommand": "pnpm build"'
-          if ($updated -eq $content) {
-            throw "Failed to rewrite beforeBuildCommand in src-tauri/tauri.conf.json"
-          }
-          Set-Content -Path $tauriConfigPath -Value $updated -Encoding utf8
 
       - name: Sanitize repo .env host-path overrides for Android runner
         shell: pwsh
@@ -446,7 +434,7 @@ jobs:
               exit $androidBuildExitCode
             }
             Write-Warning "Retrying Android build after Tauri Kotlin API copy race."
-            $tauriApiDir = Join-Path $PWD "src-tauri/vendor/tauri-plugin-opener/android/.tauri/tauri-api"
+            $tauriApiDir = Join-Path $PWD "apps/mg-read/src-tauri/vendor/tauri-plugin-opener/android/.tauri/tauri-api"
             Remove-Item -LiteralPath $tauriApiDir -Recurse -Force -ErrorAction SilentlyContinue
             $androidBuildAttempt++
           }
@@ -509,7 +497,7 @@ jobs:
           shared-key: public-build-linux-x64
           cache-workspace-crates: "true"
           workspaces: |
-            source/src-tauri -> target
+            source/apps/mg-read/src-tauri -> target
 
       - name: Install Linux system dependencies
         shell: bash
@@ -527,34 +515,6 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev
-
-      - name: Normalize Tauri beforeBuildCommand for Linux runner
-        shell: bash
-        working-directory: source
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
-
-          tauri_config_path = Path("src-tauri/tauri.conf.json")
-          content = tauri_config_path.read_text(encoding="utf-8")
-          before_build_updated = re.sub(
-              r'"beforeBuildCommand"\s*:\s*"cmd /c pnpm build"',
-              '"beforeBuildCommand": "pnpm build"',
-              content,
-              count=1,
-          )
-          updated = re.sub(
-              r'"frontendDist"\s*:\s*"\.\./dist"',
-              '"frontendDist": "../apps/mg-read/dist"',
-              before_build_updated,
-              count=1,
-          )
-          if updated == content:
-              raise RuntimeError("Failed to rewrite Tauri build settings in src-tauri/tauri.conf.json")
-          tauri_config_path.write_text(updated, encoding="utf-8")
-          PY
 
       - name: Install dependencies
         shell: bash
@@ -575,11 +535,11 @@ jobs:
         working-directory: source
         run: |
           set -euxo pipefail
-          BIN_PATH="apps/mg-read/src-tauri/target/x86_64-unknown-linux-gnu/release/legado_tauri"
+          BIN_PATH="apps/mg-read/src-tauri/target/x86_64-unknown-linux-gnu/release/mg-read"
           test -f "$BIN_PATH"
           chmod +x "$BIN_PATH"
           mkdir -p linux-packages/x64
-          tar -C "$(dirname "$BIN_PATH")" -czf linux-packages/x64/legado_tauri-linux-x64.tar.gz legado_tauri
+          tar -C "$(dirname "$BIN_PATH")" -czf linux-packages/x64/mg-read-linux-x64.tar.gz mg-read
           ls -lah linux-packages/x64
 
       - name: Normalize Linux x64 artifacts for public release
@@ -641,7 +601,7 @@ jobs:
           shared-key: public-build-linux-arm64
           cache-workspace-crates: "true"
           workspaces: |
-            source/src-tauri -> target
+            source/apps/mg-read/src-tauri -> target
 
       - name: Install Linux system dependencies
         shell: bash
@@ -659,34 +619,6 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev
-
-      - name: Normalize Tauri beforeBuildCommand for Linux runner
-        shell: bash
-        working-directory: source
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
-
-          tauri_config_path = Path("src-tauri/tauri.conf.json")
-          content = tauri_config_path.read_text(encoding="utf-8")
-          before_build_updated = re.sub(
-              r'"beforeBuildCommand"\s*:\s*"cmd /c pnpm build"',
-              '"beforeBuildCommand": "pnpm build"',
-              content,
-              count=1,
-          )
-          updated = re.sub(
-              r'"frontendDist"\s*:\s*"\.\./dist"',
-              '"frontendDist": "../apps/mg-read/dist"',
-              before_build_updated,
-              count=1,
-          )
-          if updated == content:
-              raise RuntimeError("Failed to rewrite Tauri build settings in src-tauri/tauri.conf.json")
-          tauri_config_path.write_text(updated, encoding="utf-8")
-          PY
 
       - name: Install dependencies
         shell: bash
@@ -707,11 +639,11 @@ jobs:
         working-directory: source
         run: |
           set -euxo pipefail
-          BIN_PATH="apps/mg-read/src-tauri/target/aarch64-unknown-linux-gnu/release/legado_tauri"
+          BIN_PATH="apps/mg-read/src-tauri/target/aarch64-unknown-linux-gnu/release/mg-read"
           test -f "$BIN_PATH"
           chmod +x "$BIN_PATH"
           mkdir -p linux-packages/arm64
-          tar -C "$(dirname "$BIN_PATH")" -czf linux-packages/arm64/legado_tauri-linux-arm64.tar.gz legado_tauri
+          tar -C "$(dirname "$BIN_PATH")" -czf linux-packages/arm64/mg-read-linux-arm64.tar.gz mg-read
           ls -lah linux-packages/arm64
 
       - name: Normalize Linux arm64 artifacts for public release
@@ -773,19 +705,7 @@ jobs:
           shared-key: public-build-macos
           cache-workspace-crates: "true"
           workspaces: |
-            source/src-tauri -> target
-
-      - name: Normalize Tauri beforeBuildCommand for macOS runner
-        shell: pwsh
-        working-directory: source
-        run: |
-          $tauriConfigPath = Join-Path $PWD "src-tauri/tauri.conf.json"
-          $content = Get-Content $tauriConfigPath -Raw
-          $updated = $content -replace '"beforeBuildCommand"\s*:\s*"cmd /c pnpm build"', '"beforeBuildCommand": "pnpm build"'
-          if ($updated -eq $content) {
-            throw "Failed to rewrite beforeBuildCommand in src-tauri/tauri.conf.json"
-          }
-          Set-Content -Path $tauriConfigPath -Value $updated -Encoding utf8
+            source/apps/mg-read/src-tauri -> target
 
       - name: Install dependencies
         shell: pwsh
@@ -862,8 +782,6 @@ jobs:
 
       - name: Setup Rust for Tauri OHOS test build
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-ohos
 
       - name: Restore Harmony dependency caches
         uses: actions/cache@v4
@@ -934,42 +852,7 @@ jobs:
             --branch feat/open-harmony \
             --root "${HOME}/.cargo-tauri-ohos" \
             --force
-          # cargo-mobile2 invokes ohrs by name. Install the same version that
-          # the verified local Tauri OHOS build uses, but keep it isolated.
-          cargo install ohrs \
-            --version 1.4.2 \
-            --root "${HOME}/.cargo-tauri-ohos" \
-            --force
           "${HOME}/.cargo-tauri-ohos/bin/cargo-tauri" ohos build --help
-          "${HOME}/.cargo-tauri-ohos/bin/ohrs" --version
-
-      - name: Normalize Tauri OHOS beforeBuildCommand for Linux runner
-        shell: bash
-        working-directory: source
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
-
-          tauri_config_path = Path("src-tauri/tauri.conf.json")
-          content = tauri_config_path.read_text(encoding="utf-8")
-          before_build_updated = re.sub(
-              r'"beforeBuildCommand"\s*:\s*"cmd /c pnpm build"',
-              '"beforeBuildCommand": "pnpm build"',
-              content,
-              count=1,
-          )
-          updated = re.sub(
-              r'"frontendDist"\s*:\s*"\.\./dist"',
-              '"frontendDist": "../apps/mg-read/dist"',
-              before_build_updated,
-              count=1,
-          )
-          if updated == content:
-              raise RuntimeError("Failed to rewrite Tauri build settings in src-tauri/tauri.conf.json")
-          tauri_config_path.write_text(updated, encoding="utf-8")
-          PY
 
       - name: Sync Harmony rawfile web bundle
         shell: bash
@@ -979,26 +862,21 @@ jobs:
 
       - name: Build Tauri OHOS test HAP
         shell: bash
-        working-directory: source
+        working-directory: source/apps/mg-read
         run: |
           set -euxo pipefail
           tauri_ohos_cli="${HOME}/.cargo-tauri-ohos/bin/cargo-tauri"
           hap_path="src-tauri/gen/ohos/entry/build/default/outputs/default/entry-default-unsigned.hap"
           test -x "${tauri_ohos_cli}"
-          # Limit the experimental tools to this step so they cannot replace
-          # the default Tauri CLI used by other public build targets.
-          export PATH="${HOME}/.cargo-tauri-ohos/bin:${PATH}"
-          command -v ohrs
-          ohrs --version
           "${tauri_ohos_cli}" ohos build --ci --target aarch64
           test -f "${hap_path}"
           # Keep this experimental, unsigned package distinguishable from the
           # signed ArkTS Harmony release artifact collected below.
-          mkdir -p 构建结果
-          cp "${hap_path}" "构建结果/MgRead-harmony-tauri-ohos-test-unsigned.hap"
-          unzip -l "构建结果/MgRead-harmony-tauri-ohos-test-unsigned.hap" | tee /tmp/tauri-ohos-hap-list.txt
+          mkdir -p ../../构建结果
+          cp "${hap_path}" "../../构建结果/MgRead-harmony-tauri-ohos-test-unsigned.hap"
+          unzip -l "../../构建结果/MgRead-harmony-tauri-ohos-test-unsigned.hap" | tee /tmp/tauri-ohos-hap-list.txt
           grep -q 'libs/arm64-v8a/libentry.so' /tmp/tauri-ohos-hap-list.txt
-          grep -q 'libs/arm64-v8a/liblegado_tauri_lib.so' /tmp/tauri-ohos-hap-list.txt
+          grep -q 'libs/arm64-v8a/libmg_read_lib.so' /tmp/tauri-ohos-hap-list.txt
 
       - name: Verify Harmony toolchain
         shell: bash
