@@ -852,7 +852,16 @@ jobs:
             --branch feat/open-harmony \
             --root "${HOME}/.cargo-tauri-ohos" \
             --force
+          # cargo-tauri delegates the actual OpenHarmony project build to the
+          # ohrs executable. Installing only tauri-cli compiles the ohrs crate
+          # as a dependency but does not install its binary.
+          cargo install ohrs \
+            --version 1.4.2 \
+            --root "${HOME}/.cargo-tauri-ohos" \
+            --force
+          echo "${HOME}/.cargo-tauri-ohos/bin" >> "${GITHUB_PATH}"
           "${HOME}/.cargo-tauri-ohos/bin/cargo-tauri" ohos build --help
+          "${HOME}/.cargo-tauri-ohos/bin/ohrs" --version
 
       - name: Sync Harmony rawfile web bundle
         shell: bash
