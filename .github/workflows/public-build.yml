@@ -55,9 +55,12 @@ env:
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK_VERSION: "27.2.12479018"
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: "5"
-  # build-command.mjs honors this contract and calls rustc directly. Do not
-  # rewrite package.json scripts: the parameterized entry no longer embeds wrappers there.
-  LEGADO_DISABLE_SCCACHE: "1"
+  # Hosted builds use GitHub's object-level compiler cache. Do not restore the
+  # multi-gigabyte target directories again: they exhaust the repository cache
+  # quota and still recompile workspace crates after a partial-key restore.
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   context:
@@ -206,13 +209,8 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Restore Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: public-build-windows
-          cache-workspace-crates: "true"
-          workspaces: |
-            source/apps/mg-read/src-tauri -> target
+      - name: Setup GitHub compiler cache
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Install dependencies
         shell: pwsh
@@ -241,10 +239,45 @@ jobs:
           if-no-files-found: error
 
   build_android:
-    name: Build Android
+    name: Build Android (${{ matrix.label }})
     runs-on: ubuntu-latest
     needs: context
     if: contains(needs.context.outputs.targets_csv, 'android')
+    strategy:
+      fail-fast: false
+      # Each ABI owns an isolated checkout and Gradle project. Putting all four
+      # targets back into one Tauri command serializes Rust compilation and
+      # makes the slowest mobile job gate the entire release.
+      matrix:
+        include:
+          - target: arm64
+            label: arm64
+            rust_target: aarch64-linux-android
+            clang: aarch64-linux-android
+            linker_env: CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER
+            cc_env: CC_aarch64_linux_android
+            ar_env: AR_aarch64_linux_android
+          - target: armv7
+            label: armv7
+            rust_target: armv7-linux-androideabi
+            clang: armv7a-linux-androideabi
+            linker_env: CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER
+            cc_env: CC_armv7_linux_androideabi
+            ar_env: AR_armv7_linux_androideabi
+          - target: x86_64
+            label: x86_64
+            rust_target: x86_64-linux-android
+            clang: x86_64-linux-android
+            linker_env: CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER
+            cc_env: CC_x86_64_linux_android
+            ar_env: AR_x86_64_linux_android
+          - target: x86
+            label: x86
+            rust_target: i686-linux-android
+            clang: i686-linux-android
+            linker_env: CARGO_TARGET_I686_LINUX_ANDROID_LINKER
+            cc_env: CC_i686_linux_android
+            ar_env: AR_i686_linux_android
     steps:
       - name: Checkout public repo
         uses: actions/checkout@v4
@@ -290,15 +323,10 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+          targets: ${{ matrix.rust_target }}
 
-      - name: Restore Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: public-build-android
-          cache-workspace-crates: "true"
-          workspaces: |
-            source/apps/mg-read/src-tauri -> target
+      - name: Setup GitHub compiler cache
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Ensure Ninja
         shell: pwsh
@@ -409,13 +437,16 @@ jobs:
           # The private checkout keeps Windows linker settings for local Jenkins.
           # Cargo propagates them to cc-rs, so override them with this Linux runner's NDK.
           $toolchainBin = Join-Path $ndkHome "toolchains/llvm/prebuilt/linux-x86_64/bin"
-          $androidClang = Join-Path $toolchainBin "aarch64-linux-android24-clang"
+          $androidClang = Join-Path $toolchainBin "${{ matrix.clang }}24-clang"
           $ninja = Get-Command ninja -ErrorAction Stop
           $env:ANDROID_NDK_HOME = $ndkHome
           $env:NDK_HOME = $ndkHome
-          $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = $androidClang
-          $env:CC_aarch64_linux_android = $androidClang
-          $env:AR_aarch64_linux_android = Join-Path $toolchainBin "llvm-ar"
+          # A matrix job must configure the linker for its own ABI. Reusing the
+          # old arm64-only variables makes the other three jobs appear parallel
+          # while still failing inside native dependency compilation.
+          [Environment]::SetEnvironmentVariable("${{ matrix.linker_env }}", $androidClang)
+          [Environment]::SetEnvironmentVariable("${{ matrix.cc_env }}", $androidClang)
+          [Environment]::SetEnvironmentVariable("${{ matrix.ar_env }}", (Join-Path $toolchainBin "llvm-ar"))
           $env:CMAKE_GENERATOR = "Ninja"
           $env:CMAKE_MAKE_PROGRAM = $ninja.Source
           # Tauri mobile plugin generation can race while copying its shared Kotlin API directory.
@@ -424,7 +455,7 @@ jobs:
           $androidBuildLog = Join-Path $env:RUNNER_TEMP "mgread-android-build.log"
           $androidBuildAttempt = 1
           while ($true) {
-            & pnpm build -- android all release 2>&1 | Tee-Object -FilePath $androidBuildLog
+            & pnpm build -- android "${{ matrix.target }}" release 2>&1 | Tee-Object -FilePath $androidBuildLog
             $androidBuildExitCode = $LASTEXITCODE
             if ($androidBuildExitCode -eq 0) {
               break
@@ -451,7 +482,7 @@ jobs:
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: package-android
+          name: package-android-${{ matrix.target }}
           path: public-build-results/android/*
           if-no-files-found: error
 
@@ -491,13 +522,8 @@ jobs:
         with:
           targets: x86_64-unknown-linux-gnu
 
-      - name: Restore Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: public-build-linux-x64
-          cache-workspace-crates: "true"
-          workspaces: |
-            source/apps/mg-read/src-tauri -> target
+      - name: Setup GitHub compiler cache
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Install Linux system dependencies
         shell: bash
@@ -595,13 +621,8 @@ jobs:
         with:
           targets: aarch64-unknown-linux-gnu
 
-      - name: Restore Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: public-build-linux-arm64
-          cache-workspace-crates: "true"
-          workspaces: |
-            source/apps/mg-read/src-tauri -> target
+      - name: Setup GitHub compiler cache
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Install Linux system dependencies
         shell: bash
@@ -699,13 +720,8 @@ jobs:
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
-      - name: Restore Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: public-build-macos
-          cache-workspace-crates: "true"
-          workspaces: |
-            source/apps/mg-read/src-tauri -> target
+      - name: Setup GitHub compiler cache
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Install dependencies
         shell: pwsh
@@ -741,6 +757,10 @@ jobs:
     env:
       HARMONYOS_CLI_ARCHIVE: commandline-tools-linux-x64-6.1.0.816.zip
       HARMONYOS_CLI_SHA256: 4b21e8a4ce19fc7eb381425a570e936c80067b8a0bef9cdcfe8a49e4764038e2
+      # Keep the cached CLI on the same Tauri revision as Cargo.ohos.lock.
+      # Tracking a moving branch here would silently reuse an incompatible binary.
+      TAURI_OHOS_REV: 6ed5b08175fb3a322e8a5cadbdfbe8055085122b
+      OHRS_VERSION: 1.4.2
     steps:
       - name: Checkout public repo
         uses: actions/checkout@v4
@@ -788,10 +808,27 @@ jobs:
           # apparently valid HAP that the emulator rejects at install time.
           targets: aarch64-unknown-linux-ohos,x86_64-unknown-linux-ohos
 
+      - name: Setup GitHub compiler cache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Restore HarmonyOS SDK cache
+        uses: actions/cache@v4
+        with:
+          key: ${{ runner.os }}-${{ runner.arch }}-harmony-sdk-${{ env.HARMONYOS_CLI_SHA256 }}
+          path: ~/.cache/mgread/harmonyos-tools
+
+      - name: Restore Tauri OHOS CLI cache
+        uses: actions/cache@v4
+        with:
+          key: ${{ runner.os }}-${{ runner.arch }}-tauri-ohos-cli-${{ env.TAURI_OHOS_REV }}-${{ env.OHRS_VERSION }}
+          path: ~/.cargo-tauri-ohos
+
       - name: Restore Harmony dependency caches
         uses: actions/cache@v4
         with:
-          key: ${{ runner.os }}-public-build-harmony-deps-${{ hashFiles('source/pnpm-lock.yaml', 'source/LegadoArkTS/oh-package-lock.json5', 'source/LegadoArkTS/oh-package.json5', 'source/LegadoArkTS/hvigorfile.ts', 'source/LegadoArkTS/build-profile.json5') }}
+          # Version/build-profile edits happen on every release and must not
+          # invalidate package-manager dependencies.
+          key: ${{ runner.os }}-public-build-harmony-deps-${{ hashFiles('source/LegadoArkTS/oh-package-lock.json5', 'source/LegadoArkTS/oh-package.json5') }}
           restore-keys: |
             ${{ runner.os }}-public-build-harmony-deps-
           path: |
@@ -803,17 +840,20 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          cli_url="https://github.com/Okysu/harmony-auto-build/releases/download/${HARMONYOS_CLI_ARCHIVE%.zip}/${HARMONYOS_CLI_ARCHIVE}"
-          curl --fail -L -o "${HARMONYOS_CLI_ARCHIVE}" "${cli_url}"
-          echo "${HARMONYOS_CLI_SHA256}  ${HARMONYOS_CLI_ARCHIVE}" | sha256sum --check --status
-
-          sdk_root="${RUNNER_TEMP}/harmonyos-tools"
-          rm -rf "${sdk_root}"
-          mkdir -p "${sdk_root}"
-          unzip -q "${HARMONYOS_CLI_ARCHIVE}" -d "${sdk_root}"
-          rm "${HARMONYOS_CLI_ARCHIVE}"
-
+          sdk_root="${HOME}/.cache/mgread/harmonyos-tools"
           tools_dir="${sdk_root}/command-line-tools"
+          if [ ! -d "${tools_dir}/sdk" ]; then
+            cli_url="https://github.com/Okysu/harmony-auto-build/releases/download/${HARMONYOS_CLI_ARCHIVE%.zip}/${HARMONYOS_CLI_ARCHIVE}"
+            archive_path="${RUNNER_TEMP}/${HARMONYOS_CLI_ARCHIVE}"
+            rm -rf "${sdk_root}"
+            mkdir -p "${sdk_root}"
+            curl --fail -L -o "${archive_path}" "${cli_url}"
+            echo "${HARMONYOS_CLI_SHA256}  ${archive_path}" | sha256sum --check --status
+            unzip -q "${archive_path}" -d "${sdk_root}"
+            rm "${archive_path}"
+          else
+            echo "Reusing cached HarmonyOS SDK: ${tools_dir}"
+          fi
           sdk_home="${tools_dir}/sdk"
           hap_sign_tool_path="$(find "${sdk_home}" -path '*/toolchains/lib/hap-sign-tool.jar' -print -quit)"
 
@@ -852,18 +892,24 @@ jobs:
           set -euxo pipefail
           # Do not install this experimental branch into ~/.cargo: the default
           # desktop CLI must remain the mainline Tauri toolchain.
-          cargo install tauri-cli \
-            --git https://github.com/tauri-apps/tauri \
-            --branch feat/open-harmony \
-            --root "${HOME}/.cargo-tauri-ohos" \
-            --force
+          if [ ! -x "${HOME}/.cargo-tauri-ohos/bin/cargo-tauri" ]; then
+            cargo install tauri-cli \
+              --git https://github.com/tauri-apps/tauri \
+              --rev "${TAURI_OHOS_REV}" \
+              --root "${HOME}/.cargo-tauri-ohos"
+          else
+            echo "Reusing cached Tauri OHOS CLI."
+          fi
           # cargo-tauri delegates the actual OpenHarmony project build to the
           # ohrs executable. Installing only tauri-cli compiles the ohrs crate
           # as a dependency but does not install its binary.
-          cargo install ohrs \
-            --version 1.4.2 \
-            --root "${HOME}/.cargo-tauri-ohos" \
-            --force
+          if [ ! -x "${HOME}/.cargo-tauri-ohos/bin/ohrs" ]; then
+            cargo install ohrs \
+              --version "${OHRS_VERSION}" \
+              --root "${HOME}/.cargo-tauri-ohos"
+          else
+            echo "Reusing cached ohrs CLI."
+          fi
           echo "${HOME}/.cargo-tauri-ohos/bin" >> "${GITHUB_PATH}"
           "${HOME}/.cargo-tauri-ohos/bin/cargo-tauri" ohos build --help
           "${HOME}/.cargo-tauri-ohos/bin/ohrs" --version
@@ -1111,8 +1157,9 @@ jobs:
         if: needs.build_android.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: package-android
+          pattern: package-android-*
           path: incoming/android
+          merge-multiple: true
 
       - name: Download Linux x64 artifacts
         if: needs.build_linux_x64.result == 'success'

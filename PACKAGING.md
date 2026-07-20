@@ -17,6 +17,14 @@ gh workflow run public-build.yml `
   -f release_version=<完整构建版本>
 ```
 
+## 构建性能与缓存边界
+
+- Android 的 arm64、armv7、x86_64、x86 必须保持为四个独立 matrix job，并发编译后由发布任务合并产物；禁止重新塞回单个 `android all` job 串行构建。
+- Rust 构建统一使用 `mozilla-actions/sccache-action` 的 GitHub Actions 后端。禁止恢复各平台完整 `target` 目录；这类缓存单份可达数 GB，会挤占仓库缓存额度，而且依赖键变化后仍会重新编译 workspace crate。
+- HarmonyOS SDK 按下载包 SHA-256 缓存，实验性 Tauri OHOS CLI 按锁文件对应的提交与 `ohrs` 版本缓存。缓存命中时不得再次下载 SDK 或执行 `cargo install`。
+- pnpm、Gradle、OHPM/Hvigor 继续使用各自依赖锁文件作为缓存键；发布版本号或 `build-profile.json5` 变化不得使 Harmony 依赖缓存失效。
+- 线上提速验收必须同时查看 job 耗时和日志中的 sccache 统计、SDK/CLI 复用提示，不能只凭工作流里存在 `cache` 字样判断已经生效。
+
 也可以从私库根目录触发：
 
 ```powershell
