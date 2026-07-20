@@ -55,10 +55,10 @@ env:
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK_VERSION: "27.2.12479018"
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: "5"
-  # Hosted builds use GitHub's object-level compiler cache. Do not restore the
-  # multi-gigabyte target directories again: they exhaust the repository cache
-  # quota and still recompile workspace crates after a partial-key restore.
-  SCCACHE_GHA_ENABLED: "true"
+  # Keep compiler artifacts in a bounded local sccache directory and let
+  # actions/cache upload one archive per platform. SCCACHE_GHA_ENABLED must stay
+  # unset: the object backend emits thousands of GitHub Cache API writes and is
+  # throttled during a full matrix build.
   RUSTC_WRAPPER: "sccache"
   CARGO_INCREMENTAL: "0"
 
@@ -178,6 +178,9 @@ jobs:
     runs-on: windows-latest
     needs: context
     if: contains(needs.context.outputs.targets_csv, 'windows')
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
+      SCCACHE_CACHE_SIZE: 1G
     steps:
       - name: Checkout public repo
         uses: actions/checkout@v4
@@ -209,7 +212,15 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Setup GitHub compiler cache
+      - name: Restore bounded compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: mgread-sccache-v1-windows-${{ hashFiles('source/**/Cargo.lock') }}
+          restore-keys: |
+            mgread-sccache-v1-windows-
+
+      - name: Setup compiler cache
         uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Install dependencies
@@ -243,6 +254,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: context
     if: contains(needs.context.outputs.targets_csv, 'android')
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
+      SCCACHE_CACHE_SIZE: 512M
     strategy:
       fail-fast: false
       # Each ABI owns an isolated checkout and Gradle project. Putting all four
@@ -325,7 +339,15 @@ jobs:
         with:
           targets: ${{ matrix.rust_target }}
 
-      - name: Setup GitHub compiler cache
+      - name: Restore bounded compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: mgread-sccache-v1-android-${{ matrix.target }}-${{ hashFiles('source/**/Cargo.lock') }}
+          restore-keys: |
+            mgread-sccache-v1-android-${{ matrix.target }}-
+
+      - name: Setup compiler cache
         uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Ensure Ninja
@@ -491,6 +513,9 @@ jobs:
     runs-on: ubuntu-24.04
     needs: context
     if: contains(needs.context.outputs.targets_csv, 'linux-x64')
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
+      SCCACHE_CACHE_SIZE: 512M
     steps:
       - name: Checkout public repo
         uses: actions/checkout@v4
@@ -522,7 +547,15 @@ jobs:
         with:
           targets: x86_64-unknown-linux-gnu
 
-      - name: Setup GitHub compiler cache
+      - name: Restore bounded compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: mgread-sccache-v1-linux-x64-${{ hashFiles('source/**/Cargo.lock') }}
+          restore-keys: |
+            mgread-sccache-v1-linux-x64-
+
+      - name: Setup compiler cache
         uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Install Linux system dependencies
@@ -590,6 +623,9 @@ jobs:
     runs-on: ubuntu-24.04-arm
     needs: context
     if: contains(needs.context.outputs.targets_csv, 'linux-arm64')
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
+      SCCACHE_CACHE_SIZE: 512M
     steps:
       - name: Checkout public repo
         uses: actions/checkout@v4
@@ -621,7 +657,15 @@ jobs:
         with:
           targets: aarch64-unknown-linux-gnu
 
-      - name: Setup GitHub compiler cache
+      - name: Restore bounded compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: mgread-sccache-v1-linux-arm64-${{ hashFiles('source/**/Cargo.lock') }}
+          restore-keys: |
+            mgread-sccache-v1-linux-arm64-
+
+      - name: Setup compiler cache
         uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Install Linux system dependencies
@@ -689,6 +733,9 @@ jobs:
     runs-on: macos-latest
     needs: context
     if: contains(needs.context.outputs.targets_csv, 'macos')
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
+      SCCACHE_CACHE_SIZE: 1G
     steps:
       - name: Checkout public repo
         uses: actions/checkout@v4
@@ -720,7 +767,15 @@ jobs:
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
-      - name: Setup GitHub compiler cache
+      - name: Restore bounded compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: mgread-sccache-v1-macos-${{ hashFiles('source/**/Cargo.lock') }}
+          restore-keys: |
+            mgread-sccache-v1-macos-
+
+      - name: Setup compiler cache
         uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Install dependencies
@@ -761,6 +816,8 @@ jobs:
       # Tracking a moving branch here would silently reuse an incompatible binary.
       TAURI_OHOS_REV: 6ed5b08175fb3a322e8a5cadbdfbe8055085122b
       OHRS_VERSION: 1.4.2
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
+      SCCACHE_CACHE_SIZE: 1G
     steps:
       - name: Checkout public repo
         uses: actions/checkout@v4
@@ -808,7 +865,15 @@ jobs:
           # apparently valid HAP that the emulator rejects at install time.
           targets: aarch64-unknown-linux-ohos,x86_64-unknown-linux-ohos
 
-      - name: Setup GitHub compiler cache
+      - name: Restore bounded compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: mgread-sccache-v1-harmony-${{ hashFiles('source/**/Cargo.lock') }}
+          restore-keys: |
+            mgread-sccache-v1-harmony-
+
+      - name: Setup compiler cache
         uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Restore HarmonyOS SDK cache
