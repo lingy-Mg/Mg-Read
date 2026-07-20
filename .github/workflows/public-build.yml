@@ -515,7 +515,7 @@ jobs:
     if: contains(needs.context.outputs.targets_csv, 'linux-x64')
     env:
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
-      SCCACHE_CACHE_SIZE: 512M
+      SCCACHE_CACHE_SIZE: 1G
     steps:
       - name: Checkout public repo
         uses: actions/checkout@v4
@@ -551,9 +551,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.SCCACHE_DIR }}
-          key: mgread-sccache-v1-linux-x64-${{ hashFiles('source/**/Cargo.lock') }}
+          key: mgread-sccache-v2-linux-x64-${{ hashFiles('source/**/Cargo.lock') }}
           restore-keys: |
-            mgread-sccache-v1-linux-x64-
+            mgread-sccache-v2-linux-x64-
 
       - name: Setup compiler cache
         uses: mozilla-actions/sccache-action@v0.0.10
@@ -625,7 +625,7 @@ jobs:
     if: contains(needs.context.outputs.targets_csv, 'linux-arm64')
     env:
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
-      SCCACHE_CACHE_SIZE: 512M
+      SCCACHE_CACHE_SIZE: 1G
     steps:
       - name: Checkout public repo
         uses: actions/checkout@v4
@@ -661,9 +661,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.SCCACHE_DIR }}
-          key: mgread-sccache-v1-linux-arm64-${{ hashFiles('source/**/Cargo.lock') }}
+          key: mgread-sccache-v2-linux-arm64-${{ hashFiles('source/**/Cargo.lock') }}
           restore-keys: |
-            mgread-sccache-v1-linux-arm64-
+            mgread-sccache-v2-linux-arm64-
 
       - name: Setup compiler cache
         uses: mozilla-actions/sccache-action@v0.0.10
