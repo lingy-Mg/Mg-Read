@@ -783,7 +783,10 @@ jobs:
       - name: Setup Rust for Tauri OHOS test build
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-unknown-linux-ohos
+          # The test HAP must run on both physical arm64 devices and DevEco's
+          # x86_64 emulator; installing only the arm64 target produces an
+          # apparently valid HAP that the emulator rejects at install time.
+          targets: aarch64-unknown-linux-ohos,x86_64-unknown-linux-ohos
 
       - name: Restore Harmony dependency caches
         uses: actions/cache@v4
@@ -879,15 +882,25 @@ jobs:
           tauri_ohos_cli="${HOME}/.cargo-tauri-ohos/bin/cargo-tauri"
           hap_path="src-tauri/gen/ohos/entry/build/default/outputs/default/entry-default-unsigned.hap"
           test -x "${tauri_ohos_cli}"
-          "${tauri_ohos_cli}" ohos build --ci --target aarch64
+          # cargo-mobile reads Cargo.lock from the host manifest directory.
+          # Load the isolated OHOS lock so this job never resolves desktop crates.
+          cp src-tauri/Cargo.ohos.lock src-tauri/Cargo.lock
+          ohos_lock_sha="$(sha256sum src-tauri/Cargo.lock | cut -d ' ' -f1)"
+          # The Tauri CLI runs its own cargo metadata preflight before the OHOS build.
+          # App-level config is required so that subprocess also sees the OHOS patches.
+          mkdir -p .cargo
+          cp src-tauri/ohos-cargo-patches.toml .cargo/config.toml
+          "${tauri_ohos_cli}" ohos build --ci --target aarch64 x86_64
+          test "$(sha256sum src-tauri/Cargo.lock | cut -d ' ' -f1)" = "${ohos_lock_sha}"
           test -f "${hap_path}"
           # Keep this experimental, unsigned package distinguishable from the
           # signed ArkTS Harmony release artifact collected below.
           mkdir -p ../../构建结果
           cp "${hap_path}" "../../构建结果/MgRead-harmony-tauri-ohos-test-unsigned.hap"
           unzip -l "../../构建结果/MgRead-harmony-tauri-ohos-test-unsigned.hap" | tee /tmp/tauri-ohos-hap-list.txt
-          grep -q 'libs/arm64-v8a/libentry.so' /tmp/tauri-ohos-hap-list.txt
           grep -q 'libs/arm64-v8a/libmg_read_lib.so' /tmp/tauri-ohos-hap-list.txt
+          grep -q 'libs/x86_64/libmg_read_lib.so' /tmp/tauri-ohos-hap-list.txt
+          ! grep -qE 'libs/.*/libentry\.so' /tmp/tauri-ohos-hap-list.txt
 
       - name: Verify Harmony toolchain
         shell: bash
