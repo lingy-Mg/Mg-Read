@@ -259,8 +259,8 @@ jobs:
       SCCACHE_CACHE_SIZE: 512M
     strategy:
       fail-fast: false
-      # Each ABI owns an isolated checkout and Gradle project. Putting all four
-      # targets back into one Tauri command serializes Rust compilation and
+      # Each supported ABI owns an isolated checkout and Gradle project. Putting
+      # the targets back into one Tauri command serializes Rust compilation and
       # makes the slowest mobile job gate the entire release.
       matrix:
         include:
@@ -285,13 +285,6 @@ jobs:
             linker_env: CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER
             cc_env: CC_x86_64_linux_android
             ar_env: AR_x86_64_linux_android
-          - target: x86
-            label: x86
-            rust_target: i686-linux-android
-            clang: i686-linux-android
-            linker_env: CARGO_TARGET_I686_LINUX_ANDROID_LINKER
-            cc_env: CC_i686_linux_android
-            ar_env: AR_i686_linux_android
     steps:
       - name: Checkout public repo
         uses: actions/checkout@v4
