@@ -1015,18 +1015,30 @@ jobs:
 
           const workspaceRoot = process.cwd();
           const docsDir = path.join(workspaceRoot, "docs");
+          const arktsAppPath = path.join(workspaceRoot, "LegadoArkTS", "AppScope", "app.json5");
           const arktsProfilePath = path.join(workspaceRoot, "LegadoArkTS", "build-profile.json5");
+          const tauriRoot = path.join(workspaceRoot, "apps", "mg-read", "src-tauri");
+          const tauriConfigPath = path.join(tauriRoot, "tauri.conf.json");
+          const tauriAppPath = path.join(tauriRoot, "gen", "ohos", "AppScope", "app.json5");
+          const tauriAssetsConfigPath = path.join(
+            tauriRoot,
+            "gen",
+            "ohos",
+            "assets",
+            "tauri.conf.json",
+          );
           const tauriProfilePath = path.join(
-            workspaceRoot,
-            "apps",
-            "mg-read",
-            "src-tauri",
+            tauriRoot,
             "gen",
             "ohos",
             "build-profile.json5",
           );
+          const arktsApp = parseObjectLiteral(arktsAppPath);
           const arktsProfile = parseObjectLiteral(arktsProfilePath);
+          const tauriApp = parseObjectLiteral(tauriAppPath);
           const tauriProfile = parseObjectLiteral(tauriProfilePath);
+          const tauriConfig = JSON.parse(fs.readFileSync(tauriConfigPath, "utf8"));
+          const tauriAssetsConfig = JSON.parse(fs.readFileSync(tauriAssetsConfigPath, "utf8"));
           const releaseConfig = structuredClone(
             arktsProfile.app.signingConfigs.find((config) => config.name === "release"),
           );
@@ -1046,10 +1058,21 @@ jobs:
             throw new Error("Missing Harmony signing password material directory");
           }
 
+          // This matrix job is isolated from desktop and Android builds. Align
+          // every Tauri OHOS identity input with the signed ArkTS profile only
+          // for this release checkout; changing AppScope alone makes the Tauri
+          // CLI reject the generated project as outdated before compilation.
+          const releaseBundleName = arktsApp.app.bundleName;
+          tauriConfig.identifier = releaseBundleName;
+          tauriAssetsConfig.identifier = releaseBundleName;
+          tauriApp.app.bundleName = releaseBundleName;
           tauriProfile.app.signingConfigs = [releaseConfig];
           for (const product of tauriProfile.app.products) {
             product.signingConfig = "release";
           }
+          fs.writeFileSync(tauriConfigPath, `${JSON.stringify(tauriConfig, null, 2)}\n`);
+          fs.writeFileSync(tauriAssetsConfigPath, `${JSON.stringify(tauriAssetsConfig)}\n`);
+          fs.writeFileSync(tauriAppPath, `${JSON.stringify(tauriApp, null, 2)}\n`);
           fs.writeFileSync(tauriProfilePath, `${JSON.stringify(tauriProfile, null, 2)}\n`);
           console.log(`configured release signing in ${tauriProfilePath}`);
           EOF
