@@ -1303,14 +1303,12 @@ jobs:
     if: >-
       always() &&
       !cancelled() &&
-      (
-        needs.build_windows.result == 'success' ||
-        needs.build_android.result == 'success' ||
-        needs.build_linux_x64.result == 'success' ||
-        needs.build_linux_arm64.result == 'success' ||
-        needs.build_macos.result == 'success' ||
-        needs.build_harmony.result == 'success'
-      )
+      (!contains(needs.context.outputs.targets_csv, 'windows') || needs.build_windows.result == 'success') &&
+      (!contains(needs.context.outputs.targets_csv, 'android') || needs.build_android.result == 'success') &&
+      (!contains(needs.context.outputs.targets_csv, 'linux-x64') || needs.build_linux_x64.result == 'success') &&
+      (!contains(needs.context.outputs.targets_csv, 'linux-arm64') || needs.build_linux_arm64.result == 'success') &&
+      (!contains(needs.context.outputs.targets_csv, 'macos') || needs.build_macos.result == 'success') &&
+      (!contains(needs.context.outputs.targets_csv, 'harmony') || needs.build_harmony.result == 'success')
     steps:
       - name: Checkout public repo
         uses: actions/checkout@v4
