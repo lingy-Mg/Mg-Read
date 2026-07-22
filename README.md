@@ -63,7 +63,8 @@
 
 - Harmony 现在线上改为下载并校验公开可获取的 CLI 镜像 `commandline-tools-linux-x64-6.1.0.816.zip`，再把 `source/LegadoArkTS/local.properties` 中的 `hwsdk.dir` 指向解压后的 `command-line-tools/sdk`。
 - 不再依赖公开容器里预装的旧 `hvigorw`；实际构建入口改为 CLI 提供的 `hvigorw`，并以 `ohpm install --all` + `hvigorw assembleHap` 为准。
-- Harmony job 还会使用隔离安装的 `feat/open-harmony` Tauri CLI 构建 `apps/mg-read/src-tauri/gen/ohos` 测试 HAP；该文件名含 `tauri-ohos-test-unsigned`，只证明实验链可打包，不能安装或作为正式发布包。
+- Harmony 使用一个 matrix 并发构建两条正式发布线：`Tauri OHOS release` 与 `LegadoArkTS release`。Tauri OHOS 已正式纳入公共发布，禁止删除、跳过或降级成测试 HAP；汇总 job 必须同时收到两个 signed HAP 才允许生成 `package-harmony`。
+- Tauri OHOS 外层命令只构建 release；生成工程的 Hvigor hook 仅补剩余 ABI 并显式传入 `--release`，不得把第一个 ABI 或 debug profile 重复编译。ArkTS 的 Web 资源同步仍由 `entry/hvigorfile.ts` 在自身 assemble 中执行一次。
 - 如果公开仓库已经建好，私库模板更新后还需要把 `scripts/public-build-repo-template/.github/workflows/public-build.yml`、`scripts/public-build-repo-template/scripts/prepare-public-build-artifacts.mjs`、`scripts/public-build-repo-template/scripts/create-protected-archives.ps1` 以及 `scripts/public-build-repo-template/scripts/send-qq-message.py` 同步到公开仓库实际文件；只改私库模板不会自动修好线上 workflow。
 - 每次同步后必须按 `PACKAGING.md` 比对线上 workflow blob SHA，并执行一次 `targets=all`；只看到 Release job 成功不代表六个平台打包成功。
 
@@ -84,7 +85,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\trigger-public-build.ps1 `
 - Release 说明生成逻辑直接内联在公开仓库的 GitHub Actions workflow 中：读取上一版公开 Release 的 `build-manifest.json`，记录本次提交 ID 与上次打包提交 ID，并完整列出两者之间的所有提交标题。
 - QQ 通知凭据只放在 Actions Secrets；当 `QQ_BOT_APP_ID`、`QQ_BOT_APP_SECRET`、`QQ_BOT_USER_OPENID` 全部存在时，workflow 收尾阶段会把各目标和 Release 的成功/失败状态整理成中文报告后私聊发送。
 - Android 签名文件不再依赖私库中的本地 `key.properties` / `.jks`，而是由公开仓库 Secrets 在运行时临时写入。
-- Harmony workflow 会缓存 `~/.ohpm`、`~/.npm`、`source/LegadoArkTS/oh_modules`、`source/LegadoArkTS/.hvigor`、`source/LegadoArkTS/node_modules`，以复用 `ohpm` 与项目侧 `hvigor` 依赖。
+- Harmony matrix 共享 SDK 缓存，并分别缓存 Tauri OHOS CLI、Rust sccache、生成工程 OHPM/Hvigor 依赖以及 ArkTS OHPM/Hvigor 依赖。
 - macOS 当前走未签名的通用 `universal-apple-darwin` DMG 构建；如需 notarization / stapling，需后续补 Apple 签名凭据与公证流程。
 - `linux` 会展开成 `linux-x64 + linux-arm64`。
 - `both` 仍表示 `windows + android`，`all` 表示 `windows + android + linux-x64 + linux-arm64 + macos + harmony`，避免在未准备好 Harmony 工具链时误触发。

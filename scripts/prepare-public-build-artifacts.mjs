@@ -89,10 +89,14 @@ function detectLinuxLabel(filePath) {
 
 function detectHarmonyLabel(filePath) {
   const normalized = filePath.replaceAll("\\", "/").toLowerCase();
-  // This HAP is a CI-only proof for the experimental Tauri OHOS line. It is
-  // intentionally unsigned and must not be presented as the native release.
-  if (normalized.includes("tauri-ohos-test-unsigned")) {
-    return "harmony-tauri-ohos-test-unsigned";
+  // Tauri OHOS and ArkTS are both formal Harmony release variants. Preserve
+  // their ownership in the public filename instead of collapsing two HAPs
+  // into ambiguous duplicate `harmony` artifacts.
+  if (normalized.includes("tauri-ohos")) {
+    return "harmony-tauri-ohos";
+  }
+  if (normalized.includes("arkts")) {
+    return "harmony-arkts";
   }
   return "harmony";
 }

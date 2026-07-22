@@ -797,16 +797,27 @@ jobs:
           path: public-build-results/macos/*
           if-no-files-found: error
 
-  build_harmony:
-    name: Build Harmony
+  build_harmony_variants:
+    name: Build Harmony (${{ matrix.label }})
     runs-on: ubuntu-latest
     needs: context
     if: contains(needs.context.outputs.targets_csv, 'harmony')
+    strategy:
+      fail-fast: false
+      # Tauri OHOS and ArkTS are both formal release variants. Keep them in one
+      # matrix so GitHub runs them concurrently instead of serializing two full
+      # Harmony toolchains in one long-running job.
+      matrix:
+        include:
+          - variant: tauri-ohos
+            label: Tauri OHOS release
+          - variant: arkts
+            label: ArkTS release
     env:
       HARMONYOS_CLI_ARCHIVE: commandline-tools-linux-x64-6.1.0.816.zip
       HARMONYOS_CLI_SHA256: 4b21e8a4ce19fc7eb381425a570e936c80067b8a0bef9cdcfe8a49e4764038e2
-      # Keep the cached CLI on the same Tauri revision as Cargo.ohos.lock.
-      # Tracking a moving branch here would silently reuse an incompatible binary.
+      # This pinned OHOS CLI is a formal release toolchain. Tracking a moving
+      # branch here would silently reuse a binary incompatible with Cargo.ohos.lock.
       TAURI_OHOS_REV: 6ed5b08175fb3a322e8a5cadbdfbe8055085122b
       OHRS_VERSION: 1.4.2
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
@@ -850,23 +861,23 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Rust for Tauri OHOS test build
+      - name: Setup Rust for Tauri OHOS release
+        if: matrix.variant == 'tauri-ohos'
         uses: dtolnay/rust-toolchain@stable
         with:
-          # The test HAP must run on both physical arm64 devices and DevEco's
-          # x86_64 emulator; installing only the arm64 target produces an
-          # apparently valid HAP that the emulator rejects at install time.
           targets: aarch64-unknown-linux-ohos,x86_64-unknown-linux-ohos
 
-      - name: Restore bounded compiler cache
+      - name: Restore bounded Tauri OHOS compiler cache
+        if: matrix.variant == 'tauri-ohos'
         uses: actions/cache@v4
         with:
           path: ${{ env.SCCACHE_DIR }}
-          key: mgread-sccache-v1-harmony-${{ hashFiles('source/**/Cargo.lock') }}
+          key: mgread-sccache-v2-harmony-tauri-ohos-${{ hashFiles('source/apps/mg-read/src-tauri/Cargo.ohos.lock') }}
           restore-keys: |
-            mgread-sccache-v1-harmony-
+            mgread-sccache-v2-harmony-tauri-ohos-
 
       - name: Setup compiler cache
+        if: matrix.variant == 'tauri-ohos'
         uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Restore HarmonyOS SDK cache
@@ -875,13 +886,8 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-harmony-sdk-${{ env.HARMONYOS_CLI_SHA256 }}
           path: ~/.cache/mgread/harmonyos-tools
 
-      - name: Restore Tauri OHOS CLI cache
-        uses: actions/cache@v4
-        with:
-          key: ${{ runner.os }}-${{ runner.arch }}-tauri-ohos-cli-${{ env.TAURI_OHOS_REV }}-${{ env.OHRS_VERSION }}
-          path: ~/.cargo-tauri-ohos
-
       - name: Restore Harmony dependency caches
+        if: matrix.variant == 'arkts'
         uses: actions/cache@v4
         with:
           # Version/build-profile edits happen on every release and must not
@@ -893,6 +899,25 @@ jobs:
             ~/.ohpm
             source/LegadoArkTS/oh_modules
             source/LegadoArkTS/.hvigor
+
+      - name: Restore Tauri OHOS dependency caches
+        if: matrix.variant == 'tauri-ohos'
+        uses: actions/cache@v4
+        with:
+          key: ${{ runner.os }}-public-build-tauri-ohos-deps-${{ hashFiles('source/apps/mg-read/src-tauri/gen/ohos/oh-package-lock.json5') }}
+          restore-keys: |
+            ${{ runner.os }}-public-build-tauri-ohos-deps-
+          path: |
+            ~/.ohpm
+            source/apps/mg-read/src-tauri/gen/ohos/oh_modules
+            source/apps/mg-read/src-tauri/gen/ohos/.hvigor
+
+      - name: Restore Tauri OHOS CLI cache
+        if: matrix.variant == 'tauri-ohos'
+        uses: actions/cache@v4
+        with:
+          key: ${{ runner.os }}-${{ runner.arch }}-tauri-ohos-cli-${{ env.TAURI_OHOS_REV }}-${{ env.OHRS_VERSION }}
+          path: ~/.cargo-tauri-ohos
 
       - name: Install HarmonyOS SDK
         shell: bash
@@ -926,8 +951,8 @@ jobs:
           echo "HOS_SDK_HOME=${sdk_home}" >> "${GITHUB_ENV}"
           echo "HAP_SIGN_TOOL_PATH=${hap_sign_tool_path}" >> "${GITHUB_ENV}"
           echo "OHPM_HOME=${tools_dir}/ohpm" >> "${GITHUB_ENV}"
-          # The experimental Tauri CLI reads this DevEco command-line-tools
-          # root directly; this is deliberately separate from the ArkTS HAP.
+          # The formal Tauri OHOS CLI reads this DevEco command-line-tools root
+          # directly; both matrix variants use the same pinned SDK revision.
           echo "DEV_ECO_STUDIO_INSTALL_PATH=${tools_dir}" >> "${GITHUB_ENV}"
           echo "${tools_dir}/bin" >> "${GITHUB_PATH}"
 
@@ -944,12 +969,13 @@ jobs:
         working-directory: source
         run: pnpm install --frozen-lockfile
 
-      - name: Install isolated Tauri OHOS CLI
+      - name: Install isolated Tauri OHOS release CLI
+        if: matrix.variant == 'tauri-ohos'
         shell: bash
         run: |
           set -euxo pipefail
-          # Do not install this experimental branch into ~/.cargo: the default
-          # desktop CLI must remain the mainline Tauri toolchain.
+          # Keep the pinned OHOS CLI isolated from the mainline desktop CLI,
+          # while treating its output as a required public release artifact.
           if [ ! -x "${HOME}/.cargo-tauri-ohos/bin/cargo-tauri" ]; then
             cargo install tauri-cli \
               --git https://github.com/tauri-apps/tauri \
@@ -958,9 +984,6 @@ jobs:
           else
             echo "Reusing cached Tauri OHOS CLI."
           fi
-          # cargo-tauri delegates the actual OpenHarmony project build to the
-          # ohrs executable. Installing only tauri-cli compiles the ohrs crate
-          # as a dependency but does not install its binary.
           if [ ! -x "${HOME}/.cargo-tauri-ohos/bin/ohrs" ]; then
             cargo install ohrs \
               --version "${OHRS_VERSION}" \
@@ -972,41 +995,102 @@ jobs:
           "${HOME}/.cargo-tauri-ohos/bin/cargo-tauri" ohos build --help
           "${HOME}/.cargo-tauri-ohos/bin/ohrs" --version
 
-      - name: Sync Harmony rawfile web bundle
+      - name: Configure Tauri OHOS release signing
+        if: matrix.variant == 'tauri-ohos'
         shell: bash
         working-directory: source
         run: |
-          pnpm build -- harmony
+          set -euxo pipefail
+          node --input-type=module <<'EOF'
+          import fs from "node:fs";
+          import path from "node:path";
 
-      - name: Build Tauri OHOS test HAP
+          // Both files are trusted repository-owned JSON5 object literals. Use
+          // the existing ArkTS release material as the single signing owner so
+          // the Tauri release cannot silently fall back to an unsigned HAP.
+          function parseObjectLiteral(filePath) {
+            const source = fs.readFileSync(filePath, "utf8");
+            return Function(`"use strict"; return (${source});`)();
+          }
+
+          const workspaceRoot = process.cwd();
+          const docsDir = path.join(workspaceRoot, "docs");
+          const arktsProfilePath = path.join(workspaceRoot, "LegadoArkTS", "build-profile.json5");
+          const tauriProfilePath = path.join(
+            workspaceRoot,
+            "apps",
+            "mg-read",
+            "src-tauri",
+            "gen",
+            "ohos",
+            "build-profile.json5",
+          );
+          const arktsProfile = parseObjectLiteral(arktsProfilePath);
+          const tauriProfile = parseObjectLiteral(tauriProfilePath);
+          const releaseConfig = structuredClone(
+            arktsProfile.app.signingConfigs.find((config) => config.name === "release"),
+          );
+          if (!releaseConfig) {
+            throw new Error("LegadoArkTS release signingConfig is missing");
+          }
+
+          for (const key of ["storeFile", "profile", "certpath"]) {
+            const fileName = path.basename(releaseConfig.material[key]);
+            const resolvedPath = path.join(docsDir, fileName);
+            if (!fs.existsSync(resolvedPath)) {
+              throw new Error(`Missing Harmony signing file: ${resolvedPath}`);
+            }
+            releaseConfig.material[key] = resolvedPath.replace(/\\/g, "/");
+          }
+          if (!fs.existsSync(path.join(docsDir, "material"))) {
+            throw new Error("Missing Harmony signing password material directory");
+          }
+
+          tauriProfile.app.signingConfigs = [releaseConfig];
+          for (const product of tauriProfile.app.products) {
+            product.signingConfig = "release";
+          }
+          fs.writeFileSync(tauriProfilePath, `${JSON.stringify(tauriProfile, null, 2)}\n`);
+          console.log(`configured release signing in ${tauriProfilePath}`);
+          EOF
+
+      - name: Build Tauri OHOS release HAP
+        if: matrix.variant == 'tauri-ohos'
         shell: bash
         working-directory: source/apps/mg-read
         run: |
           set -euxo pipefail
           tauri_ohos_cli="${HOME}/.cargo-tauri-ohos/bin/cargo-tauri"
-          hap_path="src-tauri/gen/ohos/entry/build/default/outputs/default/entry-default-unsigned.hap"
+          target_selection_file="src-tauri/gen/ohos/entry/.mg-ohos-targets"
+          signed_hap_path="src-tauri/gen/ohos/entry/build/default/outputs/default/entry-default-signed.hap"
           test -x "${tauri_ohos_cli}"
+
+          # The outer build compiles aarch64 in release mode. The generated
+          # Hvigor hook receives only x86_64 and passes --release, so neither
+          # ABI is rebuilt in the debug profile.
+          printf 'x86_64\n' > "${target_selection_file}"
+          trap 'rm -f "${target_selection_file}"' EXIT
+
           # cargo-mobile reads Cargo.lock from the host manifest directory.
-          # Load the isolated OHOS lock so this job never resolves desktop crates.
+          # Load the isolated OHOS lock and expose the same patches to every
+          # Cargo metadata/build subprocess started by the pinned CLI.
           cp src-tauri/Cargo.ohos.lock src-tauri/Cargo.lock
           ohos_lock_sha="$(sha256sum src-tauri/Cargo.lock | cut -d ' ' -f1)"
-          # The Tauri CLI runs its own cargo metadata preflight before the OHOS build.
-          # App-level config is required so that subprocess also sees the OHOS patches.
           mkdir -p .cargo
           cp src-tauri/ohos-cargo-patches.toml .cargo/config.toml
           "${tauri_ohos_cli}" ohos build --ci --target aarch64 x86_64
           test "$(sha256sum src-tauri/Cargo.lock | cut -d ' ' -f1)" = "${ohos_lock_sha}"
-          test -f "${hap_path}"
-          # Keep this experimental, unsigned package distinguishable from the
-          # signed ArkTS Harmony release artifact collected below.
-          mkdir -p ../../构建结果
-          cp "${hap_path}" "../../构建结果/MgRead-harmony-tauri-ohos-test-unsigned.hap"
-          unzip -l "../../构建结果/MgRead-harmony-tauri-ohos-test-unsigned.hap" | tee /tmp/tauri-ohos-hap-list.txt
+          test -f "${signed_hap_path}"
+
+          mkdir -p ../../variant-results
+          cp "${signed_hap_path}" "../../variant-results/MgRead-harmony-tauri-ohos-release-signed.hap"
+          unzip -l "../../variant-results/MgRead-harmony-tauri-ohos-release-signed.hap" | tee /tmp/tauri-ohos-hap-list.txt
           grep -q 'libs/arm64-v8a/libmg_read_lib.so' /tmp/tauri-ohos-hap-list.txt
           grep -q 'libs/x86_64/libmg_read_lib.so' /tmp/tauri-ohos-hap-list.txt
           ! grep -qE 'libs/.*/libentry\.so' /tmp/tauri-ohos-hap-list.txt
 
       - name: Verify Harmony toolchain
+        if: matrix.variant == 'arkts'
         shell: bash
         working-directory: source/LegadoArkTS
         run: |
@@ -1017,6 +1101,7 @@ jobs:
           test -f "./local.properties"
 
       - name: Verify Harmony prebuilt assets
+        if: matrix.variant == 'arkts'
         shell: bash
         working-directory: source
         run: |
@@ -1025,6 +1110,7 @@ jobs:
           test -f "LegadoArkTS/entry/src/main/cpp/prebuilt/curl-impersonate/x86_64/libcurl-impersonate.so"
 
       - name: Patch Harmony build profile to release mode
+        if: matrix.variant == 'arkts'
         shell: bash
         working-directory: source
         run: |
@@ -1063,6 +1149,7 @@ jobs:
           EOF
 
       - name: Rewrite Harmony signing material paths
+        if: matrix.variant == 'arkts'
         shell: bash
         working-directory: source
         run: |
@@ -1101,22 +1188,25 @@ jobs:
           console.log(`rewrote signing paths in ${buildProfilePath}`);
           EOF
 
-      - name: Build Harmony release
+      - name: Build ArkTS release HAP
+        if: matrix.variant == 'arkts'
         shell: bash
         working-directory: source/LegadoArkTS
         run: |
           set -euxo pipefail
           ohpm install --all
+          # entry/hvigorfile.ts owns the web-to-rawfile sync. Calling pnpm here
+          # as well would rebuild the same frontend twice before one HAP.
           # GitHub-hosted runners start from a fresh checkout, so an explicit
           # clean only adds latency and throws away reusable hvigor state.
           hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace
 
       - name: Collect Harmony artifacts
+        if: matrix.variant == 'arkts'
         shell: bash
         working-directory: source
         run: |
-          mkdir -p 构建结果
-          test -f "构建结果/MgRead-harmony-tauri-ohos-test-unsigned.hap"
+          mkdir -p variant-results
           # Do not sweep every .hap here: hvigor emits signed/unsigned variants in
           # multiple output directories, and a broad copy silently publishes
           # duplicate Harmony release archives.
@@ -1125,42 +1215,74 @@ jobs:
             mapfile -t selected_haps < <(find LegadoArkTS/entry/build -type f -name '*-signed.hap' | sort)
           fi
           if [ "${#selected_haps[@]}" -eq 0 ]; then
-            mapfile -t selected_haps < <(find LegadoArkTS/entry/build -type f -name '*.hap' | sort)
-          fi
-          if [ "${#selected_haps[@]}" -eq 0 ]; then
-            echo "No .hap artifacts were produced under LegadoArkTS/entry/build" >&2
+            echo "No signed HAP was produced under LegadoArkTS/entry/build" >&2
             exit 1
           fi
           printf '%s\n' "${selected_haps[@]}"
-          cp "${selected_haps[@]}" 构建结果/
-          ls -lah 构建结果
-          test -n "$(find 构建结果 -maxdepth 1 -type f -name '*.hap')"
+          cp "${selected_haps[0]}" "variant-results/MgRead-harmony-arkts-release-signed.hap"
+          ls -lah variant-results
 
       - name: Verify Harmony HAP native libs
+        if: matrix.variant == 'arkts'
         shell: bash
         working-directory: source
         run: |
-          HAP_PATH="$(find 构建结果 -maxdepth 1 -type f -name '*-signed.hap' | sort | head -n 1)"
-          if [ -z "$HAP_PATH" ]; then
-            HAP_PATH="$(find 构建结果 -maxdepth 1 -type f -name '*.hap' | sort | head -n 1)"
-          fi
-          test -n "$HAP_PATH"
+          HAP_PATH="variant-results/MgRead-harmony-arkts-release-signed.hap"
+          test -f "$HAP_PATH"
           unzip -l "$HAP_PATH" | tee /tmp/harmony-hap-list.txt
           grep -q 'libs/arm64-v8a/libentry.so' /tmp/harmony-hap-list.txt
           grep -q 'libs/arm64-v8a/libcurl-impersonate.so.4' /tmp/harmony-hap-list.txt
           grep -q 'libs/x86_64/libentry.so' /tmp/harmony-hap-list.txt
           grep -q 'libs/x86_64/libcurl-impersonate.so.4' /tmp/harmony-hap-list.txt
 
-      - name: Normalize Harmony artifacts for public release
+      - name: Normalize Harmony variant for public release
         shell: bash
         run: |
           node scripts/prepare-public-build-artifacts.mjs \
             harmony \
-            source/构建结果 \
-            public-build-results/harmony \
+            source/variant-results \
+            public-build-results/harmony-${{ matrix.variant }} \
             "${{ needs.context.outputs.release_version }}"
 
-      - name: Upload Harmony artifacts
+      - name: Upload Harmony variant
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-harmony-${{ matrix.variant }}
+          path: public-build-results/harmony-${{ matrix.variant }}/*
+          if-no-files-found: error
+
+  build_harmony:
+    name: Collect Harmony releases
+    runs-on: ubuntu-latest
+    needs:
+      - context
+      - build_harmony_variants
+    if: always() && contains(needs.context.outputs.targets_csv, 'harmony')
+    steps:
+      - name: Require every formal Harmony variant
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test "${{ needs.build_harmony_variants.result }}" = "success"
+
+      - name: Download Harmony variants
+        uses: actions/download-artifact@v4
+        with:
+          pattern: package-harmony-*
+          path: public-build-results/harmony
+          merge-multiple: true
+
+      - name: Verify formal Harmony release set
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mapfile -t tauri_haps < <(find public-build-results/harmony -maxdepth 1 -type f -name 'MgRead-harmony-tauri-ohos-*.hap' | sort)
+          mapfile -t arkts_haps < <(find public-build-results/harmony -maxdepth 1 -type f -name 'MgRead-harmony-arkts-*.hap' | sort)
+          test "${#tauri_haps[@]}" -eq 1
+          test "${#arkts_haps[@]}" -eq 1
+          printf '%s\n' "${tauri_haps[@]}" "${arkts_haps[@]}"
+
+      - name: Upload complete Harmony release set
         uses: actions/upload-artifact@v4
         with:
           name: package-harmony
