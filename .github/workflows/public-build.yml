@@ -1567,6 +1567,7 @@ jobs:
           macOS：$($buildResults[4].Text)
           Harmony：$($buildResults[5].Text)
           Release：$releaseText
+          Release 地址：https://github.com/${{ github.repository }}/releases/tag/${{ needs.context.outputs.release_tag }}
           运行链接：https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           "@.Trim()
 
