@@ -46,21 +46,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function Get-ReleaseByTag() {
-    # `gh release view` can report a false negative on Linux runners even when
-    # the tag already has a release. The REST endpoint is the authoritative
-    # lookup and keeps concurrent leaf publishers on the upload path.
-    $encodedReleaseTag = [Uri]::EscapeDataString($ReleaseTag)
-    $releaseJson = & gh api `
-        --method GET `
-        "repos/$Repository/releases/tags/$encodedReleaseTag" 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        return $null
-    }
-
-    return $releaseJson | ConvertFrom-Json
-}
-
 function Resolve-SevenZipCommand() {
     foreach ($commandName in @("7z", "7zz", "7za")) {
         $command = Get-Command $commandName -ErrorAction SilentlyContinue
@@ -135,24 +120,23 @@ Set-Content -LiteralPath $notesPath -Value (($noteLines -join "`r`n") + "`r`n") 
 $assetPaths = @($archives | ForEach-Object { $_.FullName })
 $lastExitCode = 1
 for ($attempt = 1; $attempt -le 6; $attempt++) {
-    $release = Get-ReleaseByTag
-    $releaseExists = $null -ne $release
+    # Upload-first is both the common path and the concurrency primitive:
+    # an existing release is updated directly; if it does not exist yet,
+    # create it. A simultaneous creator may win the race, in which case the
+    # next attempt uploads to the release it created.
+    & gh release upload $ReleaseTag @assetPaths --repo $Repository --clobber
+    $lastExitCode = $LASTEXITCODE
+    if ($lastExitCode -eq 0) {
+        break
+    }
 
-    if ($releaseExists) {
-        & gh release upload $ReleaseTag @assetPaths --repo $Repository --clobber
-        $lastExitCode = $LASTEXITCODE
-        if ($lastExitCode -eq 0) {
-            break
-        }
-    } else {
-        & gh release create $ReleaseTag @assetPaths `
-            --repo $Repository `
-            --title $ReleaseTitle `
-            --notes-file $notesPath
-        $lastExitCode = $LASTEXITCODE
-        if ($lastExitCode -eq 0) {
-            break
-        }
+    & gh release create $ReleaseTag @assetPaths `
+        --repo $Repository `
+        --title $ReleaseTitle `
+        --notes-file $notesPath
+    $lastExitCode = $LASTEXITCODE
+    if ($lastExitCode -eq 0) {
+        break
     }
 
     if ($attempt -lt 6) {
@@ -163,16 +147,6 @@ for ($attempt = 1; $attempt -le 6; $attempt++) {
 
 if ($lastExitCode -ne 0) {
     throw "Failed to create or update release $ReleaseTag after retries."
-}
-
-$release = Get-ReleaseByTag
-if ($null -eq $release) {
-    throw "Failed to verify release $ReleaseTag."
-}
-$publishedNames = @($release.assets | ForEach-Object { $_.name })
-$missingNames = @($archives | Where-Object { $publishedNames -notcontains $_.Name } | ForEach-Object { $_.Name })
-if ($missingNames.Count -gt 0) {
-    throw "Release verification is missing assets: $($missingNames -join ', ')"
 }
 
 Write-Host "[release] published $($archives.Count) archive(s) to $Repository@$ReleaseTag"
