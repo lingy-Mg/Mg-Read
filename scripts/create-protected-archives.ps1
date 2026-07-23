@@ -25,6 +25,8 @@ $ErrorActionPreference = "Stop"
 function Resolve-SevenZip() {
     $candidates = @(
         (Get-Command 7z -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
+        (Get-Command 7zz -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
+        (Get-Command 7za -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
         "C:\Program Files\7-Zip\7z.exe",
         "C:\Program Files (x86)\7-Zip\7z.exe"
     ) | Where-Object { $_ }

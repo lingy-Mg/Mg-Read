@@ -38,6 +38,10 @@ on:
         description: "Human-readable release version"
         required: false
         type: string
+      artifact_run_id:
+        description: "Existing Public Build run ID to publish without rebuilding"
+        required: false
+        type: string
   repository_dispatch:
     types:
       - private-build-request
@@ -73,6 +77,7 @@ jobs:
       targets_csv: ${{ steps.vars.outputs.targets_csv }}
       release_tag: ${{ steps.vars.outputs.release_tag }}
       release_version: ${{ steps.vars.outputs.release_version }}
+      artifact_run_id: ${{ steps.vars.outputs.artifact_run_id }}
     steps:
       - name: Resolve dispatch inputs
         id: vars
@@ -92,6 +97,7 @@ jobs:
           INPUT_TARGETS: ${{ inputs.targets }}
           INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
           INPUT_RELEASE_VERSION: ${{ inputs.release_version }}
+          INPUT_ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
         run: |
           function Pick-First([string[]]$Values) {
             foreach ($value in $Values) {
@@ -165,6 +171,12 @@ jobs:
             $env:INPUT_RELEASE_VERSION,
             $releaseTag
           )
+          $artifactRunId = Pick-First @(
+            $env:INPUT_ARTIFACT_RUN_ID
+          )
+          if ($artifactRunId -and $artifactRunId -notmatch '^\d+$') {
+            throw "artifact_run_id must contain only decimal digits."
+          }
 
           Write-OutputValue "source_ref" $sourceRef
           Write-OutputValue "source_sha" $sourceSha
@@ -172,12 +184,13 @@ jobs:
           Write-OutputValue "targets_csv" $targetsCsv
           Write-OutputValue "release_tag" $releaseTag
           Write-OutputValue "release_version" $releaseVersion
+          Write-OutputValue "artifact_run_id" $artifactRunId
 
   build_windows:
     name: Build Windows
     runs-on: windows-latest
     needs: context
-    if: contains(needs.context.outputs.targets_csv, 'windows')
+    if: needs.context.outputs.artifact_run_id == '' && contains(needs.context.outputs.targets_csv, 'windows')
     env:
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
       SCCACHE_CACHE_SIZE: 1G
@@ -249,11 +262,30 @@ jobs:
           path: public-build-results/windows/*
           if-no-files-found: error
 
+      - name: Publish Windows release assets immediately
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ARCHIVE_PASSWORD: ${{ secrets.RELEASE_ARCHIVE_PASSWORD }}
+        run: |
+          .\scripts\publish-release-artifacts.ps1 `
+            -InputDir public-build-results/windows `
+            -OutputDir public-release-assets/windows `
+            -ArchivePassword $env:RELEASE_ARCHIVE_PASSWORD `
+            -Repository "${{ github.repository }}" `
+            -ReleaseTag "${{ needs.context.outputs.release_tag }}" `
+            -ReleaseTitle "MgRead ${{ needs.context.outputs.release_version }}" `
+            -SourceRepository "${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}" `
+            -SourceRef "${{ needs.context.outputs.source_ref }}" `
+            -SourceSha "${{ needs.context.outputs.source_sha }}" `
+            -Targets "${{ needs.context.outputs.targets_csv }}" `
+            -WorkflowUrl "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
   build_android:
     name: Build Android (${{ matrix.label }})
     runs-on: ubuntu-latest
     needs: context
-    if: contains(needs.context.outputs.targets_csv, 'android')
+    if: needs.context.outputs.artifact_run_id == '' && contains(needs.context.outputs.targets_csv, 'android')
     env:
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
       SCCACHE_CACHE_SIZE: 512M
@@ -501,11 +533,30 @@ jobs:
           path: public-build-results/android/*
           if-no-files-found: error
 
+      - name: Publish Android ${{ matrix.label }} release assets immediately
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ARCHIVE_PASSWORD: ${{ secrets.RELEASE_ARCHIVE_PASSWORD }}
+        run: |
+          ./scripts/publish-release-artifacts.ps1 `
+            -InputDir public-build-results/android `
+            -OutputDir public-release-assets/android-${{ matrix.target }} `
+            -ArchivePassword $env:RELEASE_ARCHIVE_PASSWORD `
+            -Repository "${{ github.repository }}" `
+            -ReleaseTag "${{ needs.context.outputs.release_tag }}" `
+            -ReleaseTitle "MgRead ${{ needs.context.outputs.release_version }}" `
+            -SourceRepository "${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}" `
+            -SourceRef "${{ needs.context.outputs.source_ref }}" `
+            -SourceSha "${{ needs.context.outputs.source_sha }}" `
+            -Targets "${{ needs.context.outputs.targets_csv }}" `
+            -WorkflowUrl "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
   build_linux_x64:
     name: Build Linux x64
     runs-on: ubuntu-24.04
     needs: context
-    if: contains(needs.context.outputs.targets_csv, 'linux-x64')
+    if: needs.context.outputs.artifact_run_id == '' && contains(needs.context.outputs.targets_csv, 'linux-x64')
     env:
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
       SCCACHE_CACHE_SIZE: 1G
@@ -611,11 +662,30 @@ jobs:
           path: public-build-results/linux-x64/*
           if-no-files-found: error
 
+      - name: Publish Linux x64 release assets immediately
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ARCHIVE_PASSWORD: ${{ secrets.RELEASE_ARCHIVE_PASSWORD }}
+        run: |
+          ./scripts/publish-release-artifacts.ps1 `
+            -InputDir public-build-results/linux-x64 `
+            -OutputDir public-release-assets/linux-x64 `
+            -ArchivePassword $env:RELEASE_ARCHIVE_PASSWORD `
+            -Repository "${{ github.repository }}" `
+            -ReleaseTag "${{ needs.context.outputs.release_tag }}" `
+            -ReleaseTitle "MgRead ${{ needs.context.outputs.release_version }}" `
+            -SourceRepository "${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}" `
+            -SourceRef "${{ needs.context.outputs.source_ref }}" `
+            -SourceSha "${{ needs.context.outputs.source_sha }}" `
+            -Targets "${{ needs.context.outputs.targets_csv }}" `
+            -WorkflowUrl "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
   build_linux_arm64:
     name: Build Linux arm64
     runs-on: ubuntu-24.04-arm
     needs: context
-    if: contains(needs.context.outputs.targets_csv, 'linux-arm64')
+    if: needs.context.outputs.artifact_run_id == '' && contains(needs.context.outputs.targets_csv, 'linux-arm64')
     env:
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
       SCCACHE_CACHE_SIZE: 1G
@@ -721,11 +791,30 @@ jobs:
           path: public-build-results/linux-arm64/*
           if-no-files-found: error
 
+      - name: Publish Linux arm64 release assets immediately
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ARCHIVE_PASSWORD: ${{ secrets.RELEASE_ARCHIVE_PASSWORD }}
+        run: |
+          ./scripts/publish-release-artifacts.ps1 `
+            -InputDir public-build-results/linux-arm64 `
+            -OutputDir public-release-assets/linux-arm64 `
+            -ArchivePassword $env:RELEASE_ARCHIVE_PASSWORD `
+            -Repository "${{ github.repository }}" `
+            -ReleaseTag "${{ needs.context.outputs.release_tag }}" `
+            -ReleaseTitle "MgRead ${{ needs.context.outputs.release_version }}" `
+            -SourceRepository "${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}" `
+            -SourceRef "${{ needs.context.outputs.source_ref }}" `
+            -SourceSha "${{ needs.context.outputs.source_sha }}" `
+            -Targets "${{ needs.context.outputs.targets_csv }}" `
+            -WorkflowUrl "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
   build_macos:
     name: Build macOS
     runs-on: macos-latest
     needs: context
-    if: contains(needs.context.outputs.targets_csv, 'macos')
+    if: needs.context.outputs.artifact_run_id == '' && contains(needs.context.outputs.targets_csv, 'macos')
     env:
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
       SCCACHE_CACHE_SIZE: 1G
@@ -797,11 +886,30 @@ jobs:
           path: public-build-results/macos/*
           if-no-files-found: error
 
+      - name: Publish macOS release assets immediately
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ARCHIVE_PASSWORD: ${{ secrets.RELEASE_ARCHIVE_PASSWORD }}
+        run: |
+          ./scripts/publish-release-artifacts.ps1 `
+            -InputDir public-build-results/macos `
+            -OutputDir public-release-assets/macos `
+            -ArchivePassword $env:RELEASE_ARCHIVE_PASSWORD `
+            -Repository "${{ github.repository }}" `
+            -ReleaseTag "${{ needs.context.outputs.release_tag }}" `
+            -ReleaseTitle "MgRead ${{ needs.context.outputs.release_version }}" `
+            -SourceRepository "${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}" `
+            -SourceRef "${{ needs.context.outputs.source_ref }}" `
+            -SourceSha "${{ needs.context.outputs.source_sha }}" `
+            -Targets "${{ needs.context.outputs.targets_csv }}" `
+            -WorkflowUrl "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
   build_harmony_variants:
     name: Build Harmony (${{ matrix.label }})
     runs-on: ubuntu-latest
     needs: context
-    if: contains(needs.context.outputs.targets_csv, 'harmony')
+    if: needs.context.outputs.artifact_run_id == '' && contains(needs.context.outputs.targets_csv, 'harmony')
     strategy:
       fail-fast: false
       # Tauri OHOS and ArkTS are both formal release variants. Keep them in one
@@ -1274,13 +1382,32 @@ jobs:
           path: public-build-results/harmony-${{ matrix.variant }}/*
           if-no-files-found: error
 
+      - name: Publish Harmony ${{ matrix.label }} release assets immediately
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ARCHIVE_PASSWORD: ${{ secrets.RELEASE_ARCHIVE_PASSWORD }}
+        run: |
+          ./scripts/publish-release-artifacts.ps1 `
+            -InputDir public-build-results/harmony-${{ matrix.variant }} `
+            -OutputDir public-release-assets/harmony-${{ matrix.variant }} `
+            -ArchivePassword $env:RELEASE_ARCHIVE_PASSWORD `
+            -Repository "${{ github.repository }}" `
+            -ReleaseTag "${{ needs.context.outputs.release_tag }}" `
+            -ReleaseTitle "MgRead ${{ needs.context.outputs.release_version }}" `
+            -SourceRepository "${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}" `
+            -SourceRef "${{ needs.context.outputs.source_ref }}" `
+            -SourceSha "${{ needs.context.outputs.source_sha }}" `
+            -Targets "${{ needs.context.outputs.targets_csv }}" `
+            -WorkflowUrl "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
   build_harmony:
     name: Collect Harmony releases
     runs-on: ubuntu-latest
     needs:
       - context
       - build_harmony_variants
-    if: always() && contains(needs.context.outputs.targets_csv, 'harmony')
+    if: always() && needs.context.outputs.artifact_run_id == '' && contains(needs.context.outputs.targets_csv, 'harmony')
     steps:
       - name: Require every formal Harmony variant
         shell: bash
@@ -1313,7 +1440,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Publish Release
+    name: Finalize Release
     runs-on: windows-latest
     needs:
       - context
@@ -1323,15 +1450,10 @@ jobs:
       - build_linux_arm64
       - build_macos
       - build_harmony
-    if: >-
-      always() &&
-      !cancelled() &&
-      (!contains(needs.context.outputs.targets_csv, 'windows') || needs.build_windows.result == 'success') &&
-      (!contains(needs.context.outputs.targets_csv, 'android') || needs.build_android.result == 'success') &&
-      (!contains(needs.context.outputs.targets_csv, 'linux-x64') || needs.build_linux_x64.result == 'success') &&
-      (!contains(needs.context.outputs.targets_csv, 'linux-arm64') || needs.build_linux_arm64.result == 'success') &&
-      (!contains(needs.context.outputs.targets_csv, 'macos') || needs.build_macos.result == 'success') &&
-      (!contains(needs.context.outputs.targets_csv, 'harmony') || needs.build_harmony.result == 'success')
+    if: always() && !cancelled() && needs.context.result == 'success'
+    outputs:
+      artifact_run_id: ${{ steps.download.outputs.artifact_run_id }}
+      release_state: ${{ steps.publish.outputs.release_state }}
     steps:
       - name: Checkout public repo
         uses: actions/checkout@v4
@@ -1347,50 +1469,42 @@ jobs:
           # A shallow checkout would make the earlier commit unavailable to git log.
           fetch-depth: 0
 
-      - name: Download Windows artifacts
-        if: needs.build_windows.result == 'success'
-        uses: actions/download-artifact@v4
-        with:
-          name: package-windows
-          path: incoming/windows
+      - name: Download every completed leaf artifact
+        id: download
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $artifactRunId = "${{ needs.context.outputs.artifact_run_id }}"
+          if ([string]::IsNullOrWhiteSpace($artifactRunId)) {
+            $artifactRunId = "${{ github.run_id }}"
+          }
+          New-Item -ItemType Directory -Path incoming -Force | Out-Null
+          $patterns = @(
+            "package-windows",
+            "package-android-*",
+            "package-linux-x64",
+            "package-linux-arm64",
+            "package-macos",
+            "package-harmony-*"
+          )
+          foreach ($pattern in $patterns) {
+            & gh run download $artifactRunId `
+              --repo "${{ github.repository }}" `
+              --pattern $pattern `
+              --dir incoming
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "No downloadable artifact matched $pattern in run $artifactRunId."
+            }
+          }
 
-      - name: Download Android artifacts
-        if: needs.build_android.result == 'success'
-        uses: actions/download-artifact@v4
-        with:
-          pattern: package-android-*
-          path: incoming/android
-          merge-multiple: true
-
-      - name: Download Linux x64 artifacts
-        if: needs.build_linux_x64.result == 'success'
-        uses: actions/download-artifact@v4
-        with:
-          name: package-linux-x64
-          path: incoming/linux-x64
-
-      - name: Download Linux arm64 artifacts
-        if: needs.build_linux_arm64.result == 'success'
-        uses: actions/download-artifact@v4
-        with:
-          name: package-linux-arm64
-          path: incoming/linux-arm64
-
-      - name: Download macOS artifacts
-        if: needs.build_macos.result == 'success'
-        uses: actions/download-artifact@v4
-        with:
-          name: package-macos
-          path: incoming/macos
-
-      - name: Download Harmony artifacts
-        if: needs.build_harmony.result == 'success'
-        uses: actions/download-artifact@v4
-        with:
-          name: package-harmony
-          path: incoming/harmony
+          $files = @(Get-ChildItem -Path incoming -Recurse -File)
+          "artifact_run_id=$artifactRunId" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "has_artifacts=$($files.Count -gt 0)".ToLowerInvariant() |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Inspect downloaded artifacts
+        if: steps.download.outputs.has_artifacts == 'true'
         shell: pwsh
         run: |
           if (-not (Test-Path incoming)) {
@@ -1408,30 +1522,14 @@ jobs:
             Out-String -Width 240 |
             Write-Host
 
-      - name: Build release manifest
+      - name: Prepare final release directory
+        if: steps.download.outputs.has_artifacts == 'true'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path release-assets -Force | Out-Null
-          $manifest = [ordered]@{
-            source_repository = "${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}"
-            source_ref        = "${{ needs.context.outputs.source_ref }}"
-            source_sha        = "${{ needs.context.outputs.source_sha }}"
-            targets           = "${{ needs.context.outputs.targets_csv }}"
-            windows_result    = "${{ needs.build_windows.result }}"
-            linux_x64_result  = "${{ needs.build_linux_x64.result }}"
-            linux_arm64_result = "${{ needs.build_linux_arm64.result }}"
-            macos_result      = "${{ needs.build_macos.result }}"
-            android_result    = "${{ needs.build_android.result }}"
-            harmony_result    = "${{ needs.build_harmony.result }}"
-            release_tag       = "${{ needs.context.outputs.release_tag }}"
-            release_version   = "${{ needs.context.outputs.release_version }}"
-            run_id            = "${{ github.run_id }}"
-            run_attempt       = "${{ github.run_attempt }}"
-            workflow_url      = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          }
-          $manifest | ConvertTo-Json -Depth 8 | Set-Content -Path release-assets/build-manifest.json -Encoding utf8
 
       - name: Ensure 7-Zip
+        if: steps.download.outputs.has_artifacts == 'true'
         shell: pwsh
         run: |
           $sevenZip = Get-Command 7z -ErrorAction SilentlyContinue
@@ -1442,6 +1540,7 @@ jobs:
           choco install 7zip -y --no-progress
 
       - name: Create password-protected archives
+        if: steps.download.outputs.has_artifacts == 'true'
         shell: pwsh
         env:
           RELEASE_ARCHIVE_PASSWORD: ${{ secrets.RELEASE_ARCHIVE_PASSWORD }}
@@ -1449,32 +1548,96 @@ jobs:
           if (-not $env:RELEASE_ARCHIVE_PASSWORD) {
             throw "Missing secret: RELEASE_ARCHIVE_PASSWORD"
           }
-          $expectedKinds = @()
-          if ("${{ needs.build_windows.result }}" -eq "success") {
-            $expectedKinds += "windows"
-          }
-          if ("${{ needs.build_android.result }}" -eq "success") {
-            $expectedKinds += "android"
-          }
-          if ("${{ needs.build_linux_x64.result }}" -eq "success") {
-            $expectedKinds += "linux-x64"
-          }
-          if ("${{ needs.build_linux_arm64.result }}" -eq "success") {
-            $expectedKinds += "linux-arm64"
-          }
-          if ("${{ needs.build_macos.result }}" -eq "success") {
-            $expectedKinds += "macos"
-          }
-          if ("${{ needs.build_harmony.result }}" -eq "success") {
-            $expectedKinds += "harmony"
-          }
           .\scripts\create-protected-archives.ps1 `
             -InputDir incoming `
             -OutputDir release-assets `
-            -Password $env:RELEASE_ARCHIVE_PASSWORD `
-            -ExpectedKinds $expectedKinds
+            -Password $env:RELEASE_ARCHIVE_PASSWORD
+
+      - name: Build release manifest
+        if: steps.download.outputs.has_artifacts == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $artifactRunId = "${{ steps.download.outputs.artifact_run_id }}"
+          $jobsResponse = & gh api "repos/${{ github.repository }}/actions/runs/$artifactRunId/jobs?per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) {
+            throw "无法读取 artifact 来源运行的 job 状态，退出码：$LASTEXITCODE"
+          }
+          $jobs = @($jobsResponse.jobs)
+
+          function Get-JobResult([string]$Name) {
+            $job = $jobs | Where-Object { $_.name -eq $Name } | Select-Object -First 1
+            if (-not $job -or [string]::IsNullOrWhiteSpace($job.conclusion)) {
+              return "skipped"
+            }
+            return $job.conclusion
+          }
+
+          function Get-MatrixResult([string]$NamePrefix) {
+            $matrixJobs = @($jobs | Where-Object { $_.name.StartsWith($NamePrefix, [StringComparison]::Ordinal) })
+            if ($matrixJobs.Count -eq 0) {
+              return "skipped"
+            }
+            if ($matrixJobs.conclusion -contains "failure") {
+              return "failure"
+            }
+            if ($matrixJobs.conclusion -contains "cancelled") {
+              return "cancelled"
+            }
+            if (@($matrixJobs | Where-Object { $_.conclusion -ne "success" }).Count -eq 0) {
+              return "success"
+            }
+            return "skipped"
+          }
+
+          $deliverables = [ordered]@{
+            windows = Get-JobResult "Build Windows"
+            linux_x64 = Get-JobResult "Build Linux x64"
+            linux_arm64 = Get-JobResult "Build Linux arm64"
+            macos = Get-JobResult "Build macOS"
+            android = [ordered]@{
+              arm64 = Get-JobResult "Build Android (arm64)"
+              armv7 = Get-JobResult "Build Android (armv7)"
+              x86_64 = Get-JobResult "Build Android (x86_64)"
+            }
+            harmony = [ordered]@{
+              tauri_ohos = Get-JobResult "Build Harmony (Tauri OHOS release)"
+              arkts = Get-JobResult "Build Harmony (ArkTS release)"
+              collection = Get-JobResult "Collect Harmony releases"
+            }
+          }
+          $publishedAssets = @(
+            Get-ChildItem -LiteralPath release-assets -File -Filter "*.zip" |
+              Sort-Object Name |
+              ForEach-Object { $_.Name }
+          ) + "build-manifest.json"
+
+          $manifest = [ordered]@{
+            source_repository = "${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}"
+            source_ref = "${{ needs.context.outputs.source_ref }}"
+            source_sha = "${{ needs.context.outputs.source_sha }}"
+            targets = "${{ needs.context.outputs.targets_csv }}"
+            windows_result = $deliverables.windows
+            linux_x64_result = $deliverables.linux_x64
+            linux_arm64_result = $deliverables.linux_arm64
+            macos_result = $deliverables.macos
+            android_result = Get-MatrixResult "Build Android ("
+            harmony_result = $deliverables.harmony.collection
+            deliverables = $deliverables
+            published_assets = $publishedAssets
+            release_tag = "${{ needs.context.outputs.release_tag }}"
+            release_version = "${{ needs.context.outputs.release_version }}"
+            artifact_run_id = $artifactRunId
+            finalizer_run_id = "${{ github.run_id }}"
+            run_id = $artifactRunId
+            run_attempt = "${{ github.run_attempt }}"
+            workflow_url = "https://github.com/${{ github.repository }}/actions/runs/$artifactRunId"
+          }
+          $manifest | ConvertTo-Json -Depth 8 | Set-Content -Path release-assets/build-manifest.json -Encoding utf8
 
       - name: Build release notes
+        if: steps.download.outputs.has_artifacts == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1485,7 +1648,8 @@ jobs:
           $sourceRef = "${{ needs.context.outputs.source_ref }}"
           $sourceSha = "${{ needs.context.outputs.source_sha }}"
           $targets = "${{ needs.context.outputs.targets_csv }}"
-          $workflowUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          $manifest = Get-Content -Raw release-assets/build-manifest.json | ConvertFrom-Json
+          $workflowUrl = $manifest.workflow_url
           $changeSummary = @()
           $commitLines = @()
           $tempDir = Join-Path $env:RUNNER_TEMP ("previous-release-manifest-" + [guid]::NewGuid().ToString("N"))
@@ -1549,13 +1713,25 @@ jobs:
             "- Source ref：$sourceRef",
             "- 本次打包提交 ID：``$sourceSha``",
             "- 构建目标：$targets",
-            "- Windows：${{ needs.build_windows.result }}",
-            "- Linux x64：${{ needs.build_linux_x64.result }}",
-            "- Linux arm64：${{ needs.build_linux_arm64.result }}",
-            "- macOS：${{ needs.build_macos.result }}",
-            "- Android：${{ needs.build_android.result }}",
-            "- Harmony：${{ needs.build_harmony.result }}",
+            "- Windows：$($manifest.windows_result)",
+            "- Linux x64：$($manifest.linux_x64_result)",
+            "- Linux arm64：$($manifest.linux_arm64_result)",
+            "- macOS：$($manifest.macos_result)",
+            "- Android arm64：$($manifest.deliverables.android.arm64)",
+            "- Android armv7：$($manifest.deliverables.android.armv7)",
+            "- Android x86_64：$($manifest.deliverables.android.x86_64)",
+            "- Harmony Tauri OHOS：$($manifest.deliverables.harmony.tauri_ohos)",
+            "- Harmony ArkTS：$($manifest.deliverables.harmony.arkts)",
+            "- Harmony 完整性汇总：$($manifest.deliverables.harmony.collection)",
             "- 工作流运行：$workflowUrl",
+            "",
+            "## 已发布成品"
+          )
+          foreach ($assetName in $manifest.published_assets) {
+            $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$currentTag/$assetName"
+            $noteLines += "- [$assetName]($downloadUrl)"
+          }
+          $noteLines += @(
             "",
             "## 更新日志"
           )
@@ -1575,10 +1751,17 @@ jobs:
           Set-Content -Path release-notes.md -Value $releaseNotes -Encoding utf8
 
       - name: Create or update GitHub release
+        id: publish
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if ("${{ steps.download.outputs.has_artifacts }}" -ne "true") {
+            "release_state=not-published" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "No completed leaf artifacts exist; no empty Release will be created."
+            return
+          }
+
           $tag = "${{ needs.context.outputs.release_tag }}"
           $title = "MgRead ${{ needs.context.outputs.release_version }}"
           $notesFile = "release-notes.md"
@@ -1594,6 +1777,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) {
               throw "gh release create 失败，退出码：$LASTEXITCODE"
             }
+            "release_state=published" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
             return
           }
 
@@ -1606,6 +1790,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "gh release edit 失败，退出码：$LASTEXITCODE"
           }
+          "release_state=published" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
   notify:
     name: Notify QQ
@@ -1632,6 +1817,8 @@ jobs:
       - name: Build Chinese notification report
         id: report
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           function Test-Requested([string]$Target) {
             $targets = "${{ needs.context.outputs.targets_csv }}".Split(',', [System.StringSplitOptions]::RemoveEmptyEntries)
@@ -1651,39 +1838,94 @@ jobs:
             }
           }
 
-          function Convert-ReleaseResult([string]$Result) {
-            switch ($Result) {
-              "success" { return "成功" }
-              "failure" { return "失败" }
-              "cancelled" { return "已取消" }
-              "skipped" { return "未发布" }
-              default { return "未知 ($Result)" }
+          function Get-JobResult([string]$Name) {
+            $job = $jobs | Where-Object { $_.name -eq $Name } | Select-Object -First 1
+            if (-not $job -or [string]::IsNullOrWhiteSpace($job.conclusion)) {
+              return "skipped"
             }
+            return $job.conclusion
           }
 
+          function Get-MatrixResult([string]$NamePrefix) {
+            $matrixJobs = @($jobs | Where-Object { $_.name.StartsWith($NamePrefix, [StringComparison]::Ordinal) })
+            if ($matrixJobs.Count -eq 0) {
+              return "skipped"
+            }
+            if ($matrixJobs.conclusion -contains "failure") {
+              return "failure"
+            }
+            if ($matrixJobs.conclusion -contains "cancelled") {
+              return "cancelled"
+            }
+            if (@($matrixJobs | Where-Object { $_.conclusion -ne "success" }).Count -eq 0) {
+              return "success"
+            }
+            return "skipped"
+          }
+
+          $artifactRunId = "${{ needs.release.outputs.artifact_run_id }}"
+          if ([string]::IsNullOrWhiteSpace($artifactRunId)) {
+            $artifactRunId = "${{ needs.context.outputs.artifact_run_id }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($artifactRunId)) {
+            $artifactRunId = "${{ github.run_id }}"
+          }
+          $jobsResponse = & gh api "repos/${{ github.repository }}/actions/runs/$artifactRunId/jobs?per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) {
+            throw "无法读取构建运行状态，退出码：$LASTEXITCODE"
+          }
+          $jobs = @($jobsResponse.jobs)
+
+          $windowsResult = Get-JobResult "Build Windows"
+          $androidResult = Get-MatrixResult "Build Android ("
+          $linuxX64Result = Get-JobResult "Build Linux x64"
+          $linuxArm64Result = Get-JobResult "Build Linux arm64"
+          $macosResult = Get-JobResult "Build macOS"
+          $harmonyResult = Get-JobResult "Collect Harmony releases"
           $buildResults = @(
-            @{ Name = "Windows"; Requested = (Test-Requested "windows"); Raw = "${{ needs.build_windows.result }}"; Text = (Convert-TargetResult "windows" "${{ needs.build_windows.result }}") }
-            @{ Name = "Android"; Requested = (Test-Requested "android"); Raw = "${{ needs.build_android.result }}"; Text = (Convert-TargetResult "android" "${{ needs.build_android.result }}") }
-            @{ Name = "Linux x64"; Requested = (Test-Requested "linux-x64"); Raw = "${{ needs.build_linux_x64.result }}"; Text = (Convert-TargetResult "linux-x64" "${{ needs.build_linux_x64.result }}") }
-            @{ Name = "Linux arm64"; Requested = (Test-Requested "linux-arm64"); Raw = "${{ needs.build_linux_arm64.result }}"; Text = (Convert-TargetResult "linux-arm64" "${{ needs.build_linux_arm64.result }}") }
-            @{ Name = "macOS"; Requested = (Test-Requested "macos"); Raw = "${{ needs.build_macos.result }}"; Text = (Convert-TargetResult "macos" "${{ needs.build_macos.result }}") }
-            @{ Name = "Harmony"; Requested = (Test-Requested "harmony"); Raw = "${{ needs.build_harmony.result }}"; Text = (Convert-TargetResult "harmony" "${{ needs.build_harmony.result }}") }
+            @{ Name = "Windows"; Requested = (Test-Requested "windows"); Raw = $windowsResult; Text = (Convert-TargetResult "windows" $windowsResult) }
+            @{ Name = "Android"; Requested = (Test-Requested "android"); Raw = $androidResult; Text = (Convert-TargetResult "android" $androidResult) }
+            @{ Name = "Linux x64"; Requested = (Test-Requested "linux-x64"); Raw = $linuxX64Result; Text = (Convert-TargetResult "linux-x64" $linuxX64Result) }
+            @{ Name = "Linux arm64"; Requested = (Test-Requested "linux-arm64"); Raw = $linuxArm64Result; Text = (Convert-TargetResult "linux-arm64" $linuxArm64Result) }
+            @{ Name = "macOS"; Requested = (Test-Requested "macos"); Raw = $macosResult; Text = (Convert-TargetResult "macos" $macosResult) }
+            @{ Name = "Harmony"; Requested = (Test-Requested "harmony"); Raw = $harmonyResult; Text = (Convert-TargetResult "harmony" $harmonyResult) }
           )
 
           $successfulBuilds = @($buildResults | Where-Object { $_.Requested -and $_.Raw -eq "success" })
           $failedBuilds = @($buildResults | Where-Object { $_.Requested -and $_.Raw -in @("failure", "cancelled") })
-          $releaseRaw = "${{ needs.release.result }}"
-          $releaseText = Convert-ReleaseResult $releaseRaw
+          $releaseState = "${{ needs.release.outputs.release_state }}"
+          $releaseJobResult = "${{ needs.release.result }}"
+          if ($releaseState -eq "published") {
+            $releaseText = "已发布"
+          } elseif ($releaseJobResult -eq "failure") {
+            $releaseText = "发布失败"
+          } else {
+            $releaseText = "未发布（没有可用成品）"
+          }
 
-          if ($releaseRaw -eq "success" -and $failedBuilds.Count -eq 0) {
+          $publishedAssets = @()
+          if ($releaseState -eq "published") {
+            $release = & gh release view "${{ needs.context.outputs.release_tag }}" --repo "${{ github.repository }}" --json assets | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) {
+              throw "Release 已发布但无法读取资产列表。"
+            }
+            $publishedAssets = @($release.assets | ForEach-Object { $_.name } | Sort-Object)
+          }
+          $publishedAssetText = if ($publishedAssets.Count -gt 0) {
+            $publishedAssets -join ", "
+          } else {
+            "无"
+          }
+
+          if ($releaseState -eq "published" -and $failedBuilds.Count -eq 0) {
             $overall = "全部成功"
-          } elseif ($successfulBuilds.Count -eq 0) {
+          } elseif ($releaseState -eq "published") {
+            $overall = "部分失败，已发布"
+          } elseif ($successfulBuilds.Count -eq 0 -and $failedBuilds.Count -gt 0) {
             $overall = "全部失败"
-          } elseif ($releaseRaw -eq "success") {
-            $overall = "部分成功"
-          } elseif ($releaseRaw -eq "failure") {
+          } elseif ($releaseJobResult -eq "failure") {
             $overall = "部分成功，发布失败"
-          } elseif ($releaseRaw -eq "skipped") {
+          } elseif ($successfulBuilds.Count -gt 0) {
             $overall = "部分失败，未发布"
           } else {
             $overall = "部分完成"
@@ -1710,8 +1952,10 @@ jobs:
           macOS：$($buildResults[4].Text)
           Harmony：$($buildResults[5].Text)
           Release：$releaseText
+          已发布成品：$publishedAssetText
           Release 地址：https://github.com/${{ github.repository }}/releases/tag/${{ needs.context.outputs.release_tag }}
-          运行链接：https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          成品来源运行：https://github.com/${{ github.repository }}/actions/runs/$artifactRunId
+          收尾运行：https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           "@.Trim()
 
           $report | Set-Content -Path qq-report.txt -Encoding utf8

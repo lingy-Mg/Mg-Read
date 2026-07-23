@@ -17,10 +17,26 @@ gh workflow run public-build.yml `
   -f release_version=<完整构建版本>
 ```
 
+恢复一个仍保留 Actions artifacts、但旧发布门禁曾跳过 Release 的运行：
+
+```powershell
+gh workflow run public-build.yml `
+  --repo lingy-Mg/Mg-Read `
+  -f source_repository=lingy-Mg/Legado-Tauri `
+  -f source_ref=main `
+  -f source_sha=<原运行完整提交SHA> `
+  -f targets=all `
+  -f release_tag=<原版本标签> `
+  -f release_version=<原完整构建版本> `
+  -f artifact_run_id=<原运行ID>
+```
+
+`artifact_run_id` 模式不重新编译；它只下载原运行中仍未过期的叶子 `package-*` artifacts，并补齐密码压缩包、Release 说明和 manifest。
+
 ## 构建性能与缓存边界
 
-- Android 线上只构建 arm64、armv7、x86_64 三个独立 matrix job，并发编译后由发布任务合并产物；32 位 x86 已停止发布，禁止重新加入 matrix，也禁止塞回单个 `android all` job 串行构建。
-- Harmony 线上把 `Tauri OHOS release` 与 `ArkTS release` 作为两个正式 matrix 变体并发构建，再由轻量汇总 job 合并。Tauri OHOS 已是发布门禁，禁止删除、跳过、改回测试 HAP，或与 ArkTS 塞回同一 job 串行执行。
+- Android 线上只构建 arm64、armv7、x86_64 三个独立 matrix job；每个 ABI 成功后立即发布自己的成品。32 位 x86 已停止发布，禁止重新加入 matrix，也禁止塞回单个 `android all` job 串行构建。
+- Harmony 线上把 `Tauri OHOS release` 与 `ArkTS release` 作为两个正式 matrix 变体并发构建，每个变体成功后立即发布，再由轻量汇总 job 检查完整集合。Tauri OHOS 仍是完整性门禁，禁止删除、跳过、改回测试 HAP，或与 ArkTS 塞回同一 job 串行执行。
 - Rust 构建统一使用有容量上限的平台/ABI 独立本地 `sccache` 目录，并由 `actions/cache` 整包保存；Android 每 ABI 上限 512 MB，桌面、Linux 和 Harmony 每平台上限 1 GB。禁止启用 `SCCACHE_GHA_ENABLED`：逐对象后端在全平台并发构建时会产生数千次 Cache API 写入并触发限流。禁止恢复各平台完整 `target` 目录；这类缓存单份可达数 GB，会挤占仓库缓存额度，而且依赖键变化后仍会重新编译 workspace crate。
 - HarmonyOS SDK 按下载包 SHA-256 缓存，正式 Tauri OHOS CLI 按锁文件对应的提交与 `ohrs` 版本缓存。缓存命中时不得再次下载 SDK 或执行 `cargo install`。
 - pnpm、Gradle、OHPM/Hvigor 继续使用各自依赖锁文件作为缓存键；发布版本号或 `build-profile.json5` 变化不得使 Harmony 依赖缓存失效。
@@ -54,7 +70,7 @@ corepack pnpm@11.12.0 install --frozen-lockfile
 | Harmony Tauri OHOS release | `cargo-tauri ohos build --ci --target aarch64 x86_64` | 正式 signed HAP；外层先编译 arm64 release，Hvigor hook 只补 x86_64 release |
 | Harmony ArkTS release | `ohpm install --all` + `hvigorw assembleHap --mode module -p product=default -p buildMode=release` | 正式 signed HAP；Hvigor hook 自动同步 Web 资源 |
 
-桌面、Android 和 macOS 归一化产物写入私库根目录的 `构建结果/`。Linux 公共 CI 额外从 `apps/mg-read/src-tauri/target/<target>/release/mg-read` 创建 `.tar.gz`。Harmony 公共 CI 必须同时产出 `MgRead-harmony-tauri-ohos-*` 与 `MgRead-harmony-arkts-*` 两个正式 signed HAP；任一变体失败或缺失都必须让 `Collect Harmony releases` 失败，不能发布残缺的 Harmony 压缩包。
+桌面、Android 和 macOS 归一化产物写入私库根目录的 `构建结果/`。Linux 公共 CI 额外从 `apps/mg-read/src-tauri/target/<target>/release/mg-read` 创建 `.tar.gz`。Harmony 两个正式 signed HAP 分别发布；任一变体失败或缺失仍必须让 `Collect Harmony releases` 失败，且不得生成伪装成完整集合的 `package-harmony`。
 
 ## 模板上线同步
 
@@ -64,6 +80,7 @@ corepack pnpm@11.12.0 install --frozen-lockfile
 - `PACKAGING.md`
 - `scripts/prepare-public-build-artifacts.mjs`
 - `scripts/create-protected-archives.ps1`
+- `scripts/publish-release-artifacts.ps1`
 - `scripts/send-qq-message.py`
 
 同步后比较 Git blob SHA；两边必须相同：
@@ -78,8 +95,8 @@ gh api repos/lingy-Mg/Mg-Read/contents/.github/workflows/public-build.yml --jq .
 一次完整构建只有同时满足以下条件才算成功：
 
 1. `Resolve Context` 成功，`source_sha` 等于请求的完整 SHA。
-2. Windows、Android、Linux x64、Linux arm64、macOS、Harmony 六个 build job 都是 `success`。
-3. 六个最终 `package-*` Actions artifact 都存在且非空。
-4. Harmony 的 Tauri OHOS 与 ArkTS matrix 变体均成功，最终 `package-harmony` 同时包含两个正式 signed HAP；Tauri OHOS 不是测试产物，禁止缺省。
-5. `Publish Release` 成功，Release 同时包含六个平台压缩包和 `build-manifest.json`。
-6. `build-manifest.json` 中六个平台结果全为 `success`；Release 成功但任一平台失败仍应判定为“部分成功”。
+2. 每个成功的叶子 build 在其他 job 仍运行时就把自己的密码 ZIP 发布到同一正式 Release。
+3. Windows、Android 各 ABI、Linux x64、Linux arm64、macOS、Harmony 各变体的 Actions artifact 都与实际成功结果一致且非空。
+4. Harmony 的 Tauri OHOS 与 ArkTS matrix 变体均成功时，最终 `package-harmony` 同时包含两个正式 signed HAP；任一失败时汇总必须失败，但成功变体仍保留独立 Release 资产。
+5. `Finalize Release` 成功并上传 `build-manifest.json`；即时发布遗漏或短暂失败的资产会在此补发。
+6. `build-manifest.json` 保留六平台汇总字段，并记录逐 ABI/变体状态、artifact 来源运行和最终资产清单；任一目标失败时通知必须表述为“部分失败，已发布”。
