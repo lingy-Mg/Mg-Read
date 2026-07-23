@@ -46,6 +46,31 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Test-ReleaseAssets([System.IO.FileInfo[]]$ExpectedArchives) {
+    $encodedReleaseTag = [Uri]::EscapeDataString($ReleaseTag)
+    $releaseJson = & gh api `
+        --method GET `
+        "repos/$Repository/releases/tags/$encodedReleaseTag" 2>$null
+
+    try {
+        $release = $releaseJson | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        return $false
+    }
+
+    foreach ($archive in $ExpectedArchives) {
+        $expectedDigest = "sha256:$((Get-FileHash -LiteralPath $archive.FullName -Algorithm SHA256).Hash.ToLowerInvariant())"
+        $matchingAsset = @($release.assets | Where-Object {
+            $_.name -eq $archive.Name -and $_.digest -eq $expectedDigest
+        })
+        if ($matchingAsset.Count -eq 0) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
 function Resolve-SevenZipCommand() {
     foreach ($commandName in @("7z", "7zz", "7za")) {
         $command = Get-Command $commandName -ErrorAction SilentlyContinue
@@ -126,7 +151,8 @@ for ($attempt = 1; $attempt -le 6; $attempt++) {
     # next attempt uploads to the release it created.
     & gh release upload $ReleaseTag @assetPaths --repo $Repository --clobber
     $lastExitCode = $LASTEXITCODE
-    if ($lastExitCode -eq 0) {
+    if ($lastExitCode -eq 0 -or (Test-ReleaseAssets -ExpectedArchives $archives)) {
+        $lastExitCode = 0
         break
     }
 
@@ -135,7 +161,8 @@ for ($attempt = 1; $attempt -le 6; $attempt++) {
         --title $ReleaseTitle `
         --notes-file $notesPath
     $lastExitCode = $LASTEXITCODE
-    if ($lastExitCode -eq 0) {
+    if ($lastExitCode -eq 0 -or (Test-ReleaseAssets -ExpectedArchives $archives)) {
+        $lastExitCode = 0
         break
     }
 
