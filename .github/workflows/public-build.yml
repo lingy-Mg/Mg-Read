@@ -1669,10 +1669,12 @@ jobs:
 
             if (-not $previousRelease) {
               $changeSummary += "- 未找到上一版公开 Release，本次视为首次发布。"
+            } elseif (@($previousRelease.assets | Where-Object { $_.name -eq "build-manifest.json" }).Count -eq 0) {
+              $changeSummary += "- 上一版 Release (`$($previousRelease.tag_name)`) 未提供 build-manifest.json，无法计算提交区间。"
             } else {
               & gh release download $previousRelease.tag_name --repo $env:GITHUB_REPOSITORY --pattern build-manifest.json --dir $tempDir --clobber *> $null
               if ($LASTEXITCODE -ne 0) {
-                $changeSummary += "- 上一版 Release (`$($previousRelease.tag_name)`) 未提供 build-manifest.json，无法计算提交区间。"
+                $changeSummary += "- 下载上一版 Release (`$($previousRelease.tag_name)`) 的 build-manifest.json 失败，无法计算提交区间。"
               } else {
                 $manifestPath = Join-Path $tempDir "build-manifest.json"
                 $previousManifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
@@ -1750,6 +1752,7 @@ jobs:
 
           $releaseNotes = ($noteLines -join "`r`n").Trim() + "`r`n"
           Set-Content -Path release-notes.md -Value $releaseNotes -Encoding utf8
+          exit 0
 
       - name: Create or update GitHub release
         id: publish
