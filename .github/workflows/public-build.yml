@@ -1643,6 +1643,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $false
           $currentTag = "${{ needs.context.outputs.release_tag }}"
           $sourceRepository = "${{ github.event.client_payload.source_repository || inputs.source_repository || secrets.PRIVATE_SOURCE_REPOSITORY }}"
           $sourceRef = "${{ needs.context.outputs.source_ref }}"
@@ -1762,28 +1763,63 @@ jobs:
             return
           }
 
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $false
           $tag = "${{ needs.context.outputs.release_tag }}"
           $title = "MgRead ${{ needs.context.outputs.release_version }}"
           $notesFile = "release-notes.md"
+          $expectedAssets = @(Get-ChildItem -LiteralPath release-assets -File)
 
-          & gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
-          $exists = $LASTEXITCODE -eq 0
+          function Test-FinalReleaseAssets {
+            $encodedTag = [Uri]::EscapeDataString($tag)
+            $releaseJson = & gh api `
+              --method GET `
+              "repos/$env:GITHUB_REPOSITORY/releases/tags/$encodedTag" 2>$null
 
-          if (-not $exists) {
+            try {
+              $release = $releaseJson | ConvertFrom-Json -ErrorAction Stop
+            } catch {
+              return $false
+            }
+
+            foreach ($asset in $expectedAssets) {
+              $expectedDigest = "sha256:$((Get-FileHash -LiteralPath $asset.FullName -Algorithm SHA256).Hash.ToLowerInvariant())"
+              $matchingAsset = @($release.assets | Where-Object {
+                $_.name -eq $asset.Name -and $_.digest -eq $expectedDigest
+              })
+              if ($matchingAsset.Count -eq 0) {
+                return $false
+              }
+            }
+
+            return $true
+          }
+
+          $published = $false
+          for ($attempt = 1; $attempt -le 6; $attempt++) {
+            & gh release upload $tag release-assets\* --repo $env:GITHUB_REPOSITORY --clobber
+            if ($LASTEXITCODE -eq 0 -or (Test-FinalReleaseAssets)) {
+              $published = $true
+              break
+            }
+
             & gh release create $tag release-assets\* `
               --repo $env:GITHUB_REPOSITORY `
               --title $title `
               --notes-file $notesFile
-            if ($LASTEXITCODE -ne 0) {
-              throw "gh release create 失败，退出码：$LASTEXITCODE"
+            if ($LASTEXITCODE -eq 0 -or (Test-FinalReleaseAssets)) {
+              $published = $true
+              break
             }
-            "release_state=published" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-            return
+
+            if ($attempt -lt 6) {
+              Write-Warning "Final release publish attempt $attempt failed; retrying."
+              Start-Sleep -Seconds ([Math]::Min(2 * $attempt, 10))
+            }
           }
 
-          & gh release upload $tag release-assets\* --repo $env:GITHUB_REPOSITORY --clobber
-          if ($LASTEXITCODE -ne 0) {
-            throw "gh release upload 失败，退出码：$LASTEXITCODE"
+          if (-not $published) {
+            throw "无法创建或补齐 Release $tag 的最终资产。"
           }
 
           & gh release edit $tag --repo $env:GITHUB_REPOSITORY --title $title --notes-file $notesFile

@@ -45,6 +45,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $false
 
 function Test-ReleaseAssets([System.IO.FileInfo[]]$ExpectedArchives) {
     $encodedReleaseTag = [Uri]::EscapeDataString($ReleaseTag)
